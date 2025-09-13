@@ -1,0 +1,32 @@
+{
+  "teams": [
+    {
+      "team": "PHI",
+      "dstPoints": 10.0,
+      "players": [
+        {
+          "player_id": "90001",
+          "snaps": 60
+        },
+        {
+          "player_id": "90002",
+          "snaps": 55
+        }
+      ]
+    },
+    {
+      "team": "DAL",
+      "dstPoints": 8.0,
+      "players": [
+        {
+          "player_id": "91001",
+          "snaps": 58
+        },
+        {
+          "player_id": "91002",
+          "snaps": 50
+        }
+      ]
+    }
+  ]
+}
