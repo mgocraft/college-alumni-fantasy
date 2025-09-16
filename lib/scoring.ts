@@ -1,7 +1,7 @@
 
 import type { Leader, SchoolAggregate } from "./types";
 import { resolveCollege } from "./collegeMap";
-import { loadDefenseWeek } from "./defense";
+import type { DefenseWeek } from "./nflverse";
 
 type Mode = 'weekly' | 'avg';
 type DefenseMode = 'none' | 'approx';
@@ -19,7 +19,7 @@ function lineupForSchool(players: Leader[], selectorPoints: Record<string, numbe
 
 export async function aggregateByCollegeMode(
   leaders: Leader[], week: number, format: string, mode: Mode, historicalAverages: Record<string, number> | undefined,
-  opts: { includeK: boolean; defense: DefenseMode; season?: number } = { includeK: true, defense: 'none' }
+  opts: { includeK: boolean; defense: DefenseMode; defenseData?: DefenseWeek } = { includeK: true, defense: 'none' }
 ): Promise<SchoolAggregate[]> {
   const thisWeekPoints: Record<string, number> = {}; for (const l of leaders) thisWeekPoints[String(l.player_id)] = l.points || 0;
   const selectorPoints = (mode==='avg' && historicalAverages) ? historicalAverages : thisWeekPoints;
@@ -27,7 +27,7 @@ export async function aggregateByCollegeMode(
   // group by college
   const groups = new Map<string, Leader[]>(); for (const l of leaders) { const c=resolveCollege(l as any); if (!groups.has(c)) groups.set(c, []); groups.get(c)!.push(l as any); }
 
-  let defenseData = null as any; if (opts.defense==='approx' && opts.season) defenseData = await loadDefenseWeek(opts.season, week);
+  const defenseData = opts.defense === 'approx' ? (opts.defenseData ?? null) : null;
   const teamDefense: Record<string, { dstPoints:number; totalSnaps:number; snapsById:Record<string,number> }> = {};
   if (defenseData) for (const t of defenseData.teams) { const total=t.players.reduce((s:any,p:any)=>s+(p.snaps||0),0); const map:Record<string,number>={}; for (const p of t.players) map[String(p.player_id)] = p.snaps||0; teamDefense[t.team.toUpperCase()] = { dstPoints: t.dstPoints||0, totalSnaps: total, snapsById: map }; }
 
@@ -43,11 +43,11 @@ export async function aggregateByCollegeMode(
         const team=(p.team||'').toUpperCase(); const t=teamDefense[team]; if (!t || t.totalSnaps<=0) continue;
         const snaps=t.snapsById[String(p.player_id)] ?? 0; const share=snaps/t.totalSnaps; const credit=t.dstPoints*share; if (credit>0) credits.push({ player: p, credit });
       }
-      credits.sort((a,b)=>b.credit-a.credit); const top11=credits.slice(0,11); const defPoints = top11.reduce((s,c)=>s+c.credit,0);
+      credits.sort((a,b)=>b.credit-a.credit); const top11=credits.slice(0,11); const defPoints = Number(top11.reduce((s,c)=>s+c.credit,0).toFixed(2));
       total += defPoints;
       // Add display-only DEF row with contributor list
       // @ts-ignore
-      chosen.push({ player_id:`DEF-${school}-${week}`, full_name:'Defense', position:'DEF', team: undefined, points: Number(defPoints.toFixed(2)) as any, meta: { contributors: top11.map(x=>({ label: (x.player as any)?.full_name || `ID ${(x.player as any)?.player_id ?? ''}`, points: Number(x.credit.toFixed(2)) })) } } as any);
+      chosen.push({ player_id:`DEF-${school}-${week}`, full_name:'Defense', position:'DEF', team: undefined, points: defPoints as any, meta: { contributors: top11.map(x=>({ label: (x.player as any)?.full_name || `ID ${(x.player as any)?.player_id ?? ''}`, points: Number(x.credit.toFixed(2)) })) } } as any);
     }
 
     results.push({

@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
-import { fetchWeeklyLeaders, fetchWeeklyLeadersRange } from "@/lib/fnClient";
 import { aggregateByCollegeMode } from "@/lib/scoring";
+import { loadWeek, computeHistoricalAverages } from "@/lib/nflverse";
 
 export const revalidate = Number(process.env.CACHE_SECONDS ?? 3600);
 
@@ -18,16 +18,13 @@ export async function GET(req: Request, { params }: { params: { school: string }
 
   try {
     const weeks = Array.from({ length: endWeek - startWeek + 1 }, (_,i)=> startWeek + i);
+    const includeDefense = defense === 'approx';
     const series = await Promise.all(weeks.map(async (w) => {
-      const leaders = await fetchWeeklyLeaders({ week: w, format, position: "ALL" });
-      let averages: Record<string,number>|undefined;
-      if (mode==='avg' && w>1) {
-        const hist = await fetchWeeklyLeadersRange({ startWeek:1, endWeek: w-1, format, position:"ALL" });
-        const sums:Record<string,number>={}, counts:Record<string,number>={};
-        for (const wk of hist) for (const p of wk as any[]) { const id=String(p.player_id); sums[id]=(sums[id]??0)+(p.points??0); counts[id]=(counts[id]??0)+1; }
-        averages={}; for (const id of Object.keys(sums)) averages[id]=sums[id]/Math.max(1,counts[id]);
-      }
-      const bySchool = await aggregateByCollegeMode(leaders as any, w, format, mode, averages, { includeK, defense, season });
+      const weekPromise = loadWeek({ season, week: w, format, includeDefense });
+      const averagesPromise: Promise<Record<string, number> | undefined> =
+        mode === 'avg' && w > 1 ? computeHistoricalAverages(season, w, format) : Promise.resolve(undefined);
+      const [{ leaders, defenseData }, averages] = await Promise.all([weekPromise, averagesPromise]);
+      const bySchool = await aggregateByCollegeMode(leaders, w, format, mode, averages, { includeK, defense, defenseData });
       const match = bySchool.find(r => r.school.toLowerCase() === schoolParam.toLowerCase());
       return match ? { week: w, totalPoints: match.totalPoints, performers: match.performers } : { week: w, totalPoints: 0, performers: [] };
     }));
