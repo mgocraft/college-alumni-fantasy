@@ -1,6 +1,6 @@
 # College Alumni Fantasy — Full MVP
 
-Next.js (App Router, TypeScript) that aggregates FantasyNerds weekly leaders into **college alumni** scores.
+Next.js (App Router, TypeScript) that aggregates open nflverse weekly stats into **college alumni** scores.
 
 Features:
 - Lineup: **QB, TE, WR, WR, RB, RB, K (optional), FLEX (WR3/RB3/TE2)**.
@@ -12,6 +12,8 @@ Features:
 ## Quickstart
 ```bash
 npm install
-cp .env.example .env.local  # set FANTASYNERDS_API_KEY
+cp .env.example .env.local
 npm run dev
 ```
+
+No API keys required — all data comes from nflverse public releases downloaded on demand and cached locally.

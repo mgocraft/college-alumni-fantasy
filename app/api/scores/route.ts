@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
-import { fetchWeeklyLeaders, fetchWeeklyLeadersRange } from "@/lib/fnClient";
 import { aggregateByCollegeMode } from "@/lib/scoring";
+import { loadWeek, computeHistoricalAverages } from "@/lib/nflverse";
 
 export const revalidate = Number(process.env.CACHE_SECONDS ?? 3600);
 
@@ -15,15 +15,12 @@ export async function GET(req: Request) {
   const defense = (url.searchParams.get("defense") as 'none'|'approx') ?? 'none';
 
   try {
-    const leaders = await fetchWeeklyLeaders({ week, format, position: "ALL" });
-    let averages: Record<string,number>|undefined;
-    if (mode==='avg' && week>1) {
-      const hist = await fetchWeeklyLeadersRange({ startWeek:1, endWeek: week-1, format, position: "ALL" });
-      const sums:Record<string,number>={}, counts:Record<string,number>={};
-      for (const w of hist) for (const p of w as any[]) { const id=String(p.player_id); sums[id]=(sums[id]??0)+(p.points??0); counts[id]=(counts[id]??0)+1; }
-      averages = {}; for (const id of Object.keys(sums)) averages[id] = sums[id] / Math.max(1, counts[id]);
-    }
-    const bySchool = await aggregateByCollegeMode(leaders as any, week, format, mode, averages, { includeK, defense, season });
+    const includeDefense = defense === 'approx';
+    const weekPromise = loadWeek({ season, week, format, includeDefense });
+    const averagesPromise: Promise<Record<string, number> | undefined> =
+      mode === 'avg' && week > 1 ? computeHistoricalAverages(season, week, format) : Promise.resolve(undefined);
+    const [{ leaders, defenseData }, averages] = await Promise.all([weekPromise, averagesPromise]);
+    const bySchool = await aggregateByCollegeMode(leaders, week, format, mode, averages, { includeK, defense, defenseData });
     return NextResponse.json({ season, week, format, mode, includeK, defense, count: bySchool.length, results: bySchool });
   } catch (e:any) { return NextResponse.json({ error: e.message ?? String(e) }, { status: 500 }); }
 }

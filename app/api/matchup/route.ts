@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
-import { fetchWeeklyLeaders } from "@/lib/fnClient";
 import { aggregateByCollegeMode } from "@/lib/scoring";
+import { loadWeek, computeHistoricalAverages } from "@/lib/nflverse";
 import { saveRecord, MatchRecord } from "@/lib/league";
 export const revalidate = 0;
 export async function GET(req: Request) {
@@ -17,8 +17,12 @@ export async function GET(req: Request) {
   const doRecord = (url.searchParams.get("record") || "false").toLowerCase() === "true";
   if (!home || !away) return NextResponse.json({ error: "Missing ?home or ?away" }, { status: 400 });
   try {
-    const leaders = await fetchWeeklyLeaders({ week, format, position: "ALL" });
-    const bySchool = await aggregateByCollegeMode(leaders as any, week, format, mode, undefined, { includeK, defense, season });
+    const includeDefense = defense === 'approx';
+    const weekPromise = loadWeek({ season, week, format, includeDefense });
+    const averagesPromise: Promise<Record<string, number> | undefined> =
+      mode === 'avg' && week > 1 ? computeHistoricalAverages(season, week, format) : Promise.resolve(undefined);
+    const [{ leaders, defenseData }, averages] = await Promise.all([weekPromise, averagesPromise]);
+    const bySchool = await aggregateByCollegeMode(leaders, week, format, mode, averages, { includeK, defense, defenseData });
     const a = bySchool.find(r => r.school.toLowerCase() === home.toLowerCase());
     const b = bySchool.find(r => r.school.toLowerCase() === away.toLowerCase());
     const homePoints = a?.totalPoints ?? 0, awayPoints = b?.totalPoints ?? 0;
