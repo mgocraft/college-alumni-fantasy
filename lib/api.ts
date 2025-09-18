@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { assignErrorCause, getErrorCause } from "./errors";
 
 export class HttpError extends Error {
   status: number;
@@ -10,7 +11,10 @@ export class HttpError extends Error {
   code?: string;
 
   constructor(status: number, message: string, options?: { detail?: string; cause?: unknown; urlHints?: string[]; code?: string }) {
-    super(message, options);
+    super(message);
+    if (options && "cause" in options) {
+      assignErrorCause(this, options.cause);
+    }
     this.status = status;
     this.detail = options?.detail;
     this.urlHints = options?.urlHints;
@@ -75,7 +79,8 @@ export const respondWithError = (scope: string, error: unknown, options: ErrorRe
     return NextResponse.json(payload, { status: err.status });
   }
 
-  const detail = err.cause instanceof Error ? err.cause.message : undefined;
+  const cause = getErrorCause(err);
+  const detail = cause instanceof Error ? cause.message : undefined;
   const payload: Record<string, unknown> = detail ? { error: err.message, detail } : { error: err.message };
   if (input !== undefined) payload.input = input;
   const hints = mergeHints(urlHints);
