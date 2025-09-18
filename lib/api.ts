@@ -2,12 +2,19 @@ import { NextResponse } from "next/server";
 
 export class HttpError extends Error {
   status: number;
+
   detail?: string;
 
-  constructor(status: number, message: string, options?: { detail?: string; cause?: unknown }) {
+  urlHints?: string[];
+
+  code?: string;
+
+  constructor(status: number, message: string, options?: { detail?: string; cause?: unknown; urlHints?: string[]; code?: string }) {
     super(message, options);
     this.status = status;
     this.detail = options?.detail;
+    this.urlHints = options?.urlHints;
+    if (options?.code) this.code = options.code;
   }
 }
 
@@ -16,24 +23,64 @@ const asError = (error: unknown): Error => {
   return new Error(typeof error === "string" ? error : JSON.stringify(error));
 };
 
-export const respondWithError = (scope: string, error: unknown, fallbackStatus = 500) => {
+type ErrorResponseOptions = {
+  fallbackStatus?: number;
+  input?: unknown;
+  urlHints?: string[];
+};
+
+const mergeHints = (...lists: (string[] | undefined)[]): string[] => {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const list of lists) {
+    if (!list) continue;
+    for (const hint of list) {
+      if (!hint) continue;
+      const trimmed = hint.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      result.push(trimmed);
+    }
+  }
+  return result;
+};
+
+export const respondWithError = (scope: string, error: unknown, options: ErrorResponseOptions = {}) => {
+  const { fallbackStatus = 500, input, urlHints } = options;
   const err = asError(error);
-  // Always log to aid debugging, but avoid noisy stack traces in tests when scope is empty.
   if (scope) {
     // eslint-disable-next-line no-console
     console.error(`[${scope}]`, err);
   }
 
   if (err instanceof HttpError) {
-    return NextResponse.json(
-      err.detail ? { error: err.message, detail: err.detail } : { error: err.message },
-      { status: err.status },
-    );
+    const hints = mergeHints(urlHints, err.urlHints);
+    if ((err as { code?: string }).code === "NFLVERSE_ASSET_MISSING") {
+      const payload: Record<string, unknown> = {
+        error: err.message,
+        url: (err as { url?: string }).url,
+        season: (err as { season?: number }).season,
+        week: (err as { week?: number }).week,
+        hint: "This file is published after games are processed.",
+      };
+      if (input !== undefined) payload.input = input;
+      if (hints.length) payload.urlHints = hints;
+      return NextResponse.json(payload, { status: err.status });
+    }
+    const payload: Record<string, unknown> = err.detail
+      ? { error: err.message, detail: err.detail }
+      : { error: err.message };
+    if (input !== undefined) payload.input = input;
+    if (hints.length) payload.urlHints = hints;
+    return NextResponse.json(payload, { status: err.status });
   }
 
   const detail = err.cause instanceof Error ? err.cause.message : undefined;
-  const body = detail ? { error: err.message, detail } : { error: err.message };
-  return NextResponse.json(body, { status: fallbackStatus });
+  const payload: Record<string, unknown> = detail ? { error: err.message, detail } : { error: err.message };
+  if (input !== undefined) payload.input = input;
+  const hints = mergeHints(urlHints);
+  if (hints.length) payload.urlHints = hints;
+  return NextResponse.json(payload, { status: fallbackStatus });
 };
 
 const coerceInt = (value: string | null, fallback: number): number => {

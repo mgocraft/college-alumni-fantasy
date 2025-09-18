@@ -1,7 +1,8 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { gunzipSync } from "zlib";
 import { HttpError } from "./api";
-import { fetchWithRetry } from "./http";
+import { fetchBuffer } from "./http";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
 
@@ -9,11 +10,19 @@ const RELEASE_BASE = "https://github.com/nflverse/nflverse-data/releases/downloa
 const DEFAULT_USER_AGENT = "college-alumni-fantasy/1.0 (+https://github.com/)";
 const CACHE_SECONDS = Number(process.env.CACHE_SECONDS ?? 3600);
 const CACHE_MS = CACHE_SECONDS > 0 ? CACHE_SECONDS * 1000 : 0;
-const CACHE_ROOT = process.env.NFLVERSE_CACHE_DIR ? path.resolve(process.env.NFLVERSE_CACHE_DIR) : path.join(process.cwd(), ".next", "cache", "nflverse");
+const CACHE_ROOT = process.env.NFLVERSE_CACHE_DIR
+  ? path.resolve(process.env.NFLVERSE_CACHE_DIR)
+  : path.join(process.cwd(), ".next", "cache", "nflverse");
 const HEADERS: Record<string, string> = {
   "User-Agent": process.env.NFLVERSE_USER_AGENT || DEFAULT_USER_AGENT,
-  Accept: "text/csv,application/octet-stream",
+  Accept: "text/csv,application/octet-stream,application/gzip",
 };
+
+export const urlPlayerStats = (season: number) =>
+  `${RELEASE_BASE}/stats_player/stats_player_week_${season}.csv.gz`;
+
+export const urlWeeklyRosters = (season: number) =>
+  `${RELEASE_BASE}/weekly_rosters/roster_week_${season}.csv.gz`;
 
 const toPositiveInt = (value: string | undefined, fallback: number): number => {
   const num = Number(value);
@@ -26,8 +35,11 @@ const toPositiveMs = (value: string | undefined, fallback: number): number => {
 };
 
 const NFLVERSE_FETCH_ATTEMPTS = toPositiveInt(process.env.NFLVERSE_FETCH_ATTEMPTS ?? process.env.FETCH_ATTEMPTS, 3);
-const NFLVERSE_FETCH_TIMEOUT_MS = toPositiveMs(process.env.NFLVERSE_FETCH_TIMEOUT_MS ?? process.env.FETCH_TIMEOUT_MS, 20000);
-const NFLVERSE_FETCH_RETRY_DELAY_MS = toPositiveMs(process.env.NFLVERSE_FETCH_RETRY_DELAY_MS ?? process.env.FETCH_RETRY_DELAY_MS, 750);
+const NFLVERSE_FETCH_TIMEOUT_MS = toPositiveMs(
+  process.env.NFLVERSE_FETCH_TIMEOUT_MS ?? process.env.FETCH_TIMEOUT_MS,
+  20000,
+);
+const NFLVERSE_FETCH_RETRIES = Math.max(0, NFLVERSE_FETCH_ATTEMPTS - 1);
 
 type CsvRow = Record<string, string>;
 
@@ -78,6 +90,49 @@ const parseCsv = (text: string): CsvRow[] => {
     result.push(obj);
   }
   return result;
+};
+
+export class NflverseAssetMissingError extends HttpError {
+  url: string;
+
+  releaseTag: string;
+
+  season: number;
+
+  week?: number;
+
+  urlHints: string[];
+
+  code = "NFLVERSE_ASSET_MISSING" as const;
+
+  constructor(params: { url: string; releaseTag: string; season: number; week?: number }) {
+    super(404, "NFLVERSE_ASSET_MISSING", {
+      detail: `NFLverse asset not yet available at ${params.url}`,
+    });
+    this.url = params.url;
+    this.releaseTag = params.releaseTag;
+    this.season = params.season;
+    this.week = params.week;
+    this.urlHints = [params.url];
+  }
+}
+
+const logCsvSnapshot = (csv: string, context: string) => {
+  const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const headers = lines[0] ?? "";
+  const firstRow = lines[1] ?? "";
+  // eslint-disable-next-line no-console
+  console.error(`[nflverse] CSV parse issue for ${context}`, { headers, firstRow });
+};
+
+const parseCsvSafe = (csv: string, context: string): CsvRow[] => {
+  try {
+    return parseCsv(csv);
+  } catch (error) {
+    logCsvSnapshot(csv, context);
+    const err = error instanceof Error ? error : new Error(String(error));
+    throw new Error(`[nflverse] Failed to parse CSV for ${context}: ${err.message}`, { cause: err });
+  }
 };
 
 type MapCollections = {
@@ -174,50 +229,216 @@ const rosterLookupCache = new Map<number, RosterLookup>();
 const playerStatsSeasonCache = new Map<number, Map<number, NflversePlayerStat[]>>();
 const snapSeasonCache = new Map<number, Map<number, DefSnapRow[]>>();
 const teamDefenseSeasonCache = new Map<number, Map<number, TeamDefenseInput[]>>();
+const fallbackNameTeamWarnings = new Set<string>();
+const playerColumnWarnings = new Set<number>();
 
-const ensureCacheDir = async () => { await fs.mkdir(CACHE_ROOT, { recursive: true }); };
+const getCachePath = (releaseTag: string, filename: string) => path.join(CACHE_ROOT, releaseTag, filename);
 
-const readCache = async (key: string): Promise<string | null> => {
-  const file = path.join(CACHE_ROOT, `${key}.csv`);
+const readCachedBuffer = async (releaseTag: string, filename: string): Promise<Buffer | null> => {
+  const file = getCachePath(releaseTag, filename);
   try {
     const stat = await fs.stat(file);
     if (CACHE_MS > 0 && Date.now() - stat.mtimeMs > CACHE_MS) return null;
-    return await fs.readFile(file, "utf-8");
-  } catch { return null; }
-};
-
-const writeCache = async (key: string, contents: string) => {
-  const file = path.join(CACHE_ROOT, `${key}.csv`);
-  await ensureCacheDir();
-  await fs.writeFile(file, contents, "utf-8");
-};
-
-async function fetchCsv(key: string, url: string): Promise<CsvRow[]> {
-  const cached = await readCache(key);
-  if (cached) return parseCsv(cached);
-  try {
-    const response = await fetchWithRetry(
-      url,
-      { headers: HEADERS, cache: "no-store" },
-      {
-        attempts: NFLVERSE_FETCH_ATTEMPTS,
-        timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS,
-        retryDelayMs: NFLVERSE_FETCH_RETRY_DELAY_MS,
-      },
-    );
-    const text = await response.text();
-    await writeCache(key, text);
-    return parseCsv(text);
-  } catch (error) {
-    if (error instanceof HttpError) {
-      throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
-    }
-    if (error instanceof Error) {
-      throw new Error(`[nflverse] ${error.message}`, { cause: error });
-    }
-    throw new Error(`[nflverse] ${String(error)}`);
+    return await fs.readFile(file);
+  } catch {
+    return null;
   }
+};
+
+const writeCachedBuffer = async (releaseTag: string, filename: string, contents: Buffer) => {
+  const file = getCachePath(releaseTag, filename);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, contents);
+};
+
+type CsvAssetOptions = {
+  releaseTag: string;
+  filename: string;
+  url: string;
+  season: number;
+  week?: number;
+  gz?: boolean;
+  requireHead?: boolean;
+};
+
+const HEAD_RETRIES = Math.min(1, NFLVERSE_FETCH_RETRIES);
+
+async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
+  const { releaseTag, filename, url, season, week, gz = false, requireHead = true } = options;
+  let raw = await readCachedBuffer(releaseTag, filename);
+  if (!raw) {
+    if (requireHead) {
+      try {
+        await fetchBuffer(
+          url,
+          { method: "HEAD", headers: HEADERS, cache: "no-store" },
+          { timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS, retries: HEAD_RETRIES },
+        );
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 404) {
+          // eslint-disable-next-line no-console
+          console.warn("NFLVERSE_MISS", { releaseTag, url, season, week });
+          throw new NflverseAssetMissingError({ url, releaseTag, season, week });
+        }
+        if (error instanceof HttpError) {
+          throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
+        }
+        const err = error instanceof Error ? error : new Error(String(error));
+        throw new Error(`[nflverse] HEAD ${url} failed: ${err.message}`, { cause: err });
+      }
+    }
+    try {
+      raw = await fetchBuffer(
+        url,
+        { headers: HEADERS, cache: "no-store" },
+        { timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS, retries: NFLVERSE_FETCH_RETRIES },
+      );
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
+      }
+      const err = error instanceof Error ? error : new Error(String(error));
+      throw new Error(`[nflverse] Failed to fetch ${url}: ${err.message}`, { cause: err });
+    }
+    await writeCachedBuffer(releaseTag, filename, raw);
+  }
+  const source = raw;
+  let text: string;
+  if (gz) {
+    try {
+      text = gunzipSync(source).toString("utf-8");
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      // eslint-disable-next-line no-console
+      console.error(`[nflverse] Failed to unzip ${releaseTag}/${filename}`, err);
+      throw new Error(`[nflverse] Failed to unzip ${releaseTag}/${filename}: ${err.message}`, { cause: err });
+    }
+  } else {
+    text = source.toString("utf-8");
+  }
+  return parseCsvSafe(text, `${releaseTag}/${filename}`);
 }
+
+type CsvAssetVariant = {
+  releaseTag: string;
+  filename: string;
+  url: string;
+  gz?: boolean;
+  requireHead?: boolean;
+};
+
+const mergeUrlHintValues = (...sources: (string[] | undefined)[]): string[] => {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const source of sources) {
+    if (!source) continue;
+    for (const hint of source) {
+      if (!hint) continue;
+      const trimmed = hint.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      merged.push(trimmed);
+    }
+  }
+  return merged;
+};
+
+const fetchCsvAssetVariants = async (
+  variants: CsvAssetVariant[],
+  { season, week }: { season: number; week?: number },
+): Promise<CsvRow[]> => {
+  const collectedHints: string[] = [];
+  let lastMissing: NflverseAssetMissingError | undefined;
+  for (const variant of variants) {
+    try {
+      return await fetchCsvAsset({
+        releaseTag: variant.releaseTag,
+        filename: variant.filename,
+        url: variant.url,
+        season,
+        week,
+        gz: variant.gz,
+        requireHead: variant.requireHead,
+      });
+    } catch (error) {
+      if (error instanceof NflverseAssetMissingError) {
+        collectedHints.push(error.url);
+        if (error.urlHints) collectedHints.push(...error.urlHints);
+        lastMissing = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+  if (lastMissing) {
+    lastMissing.urlHints = mergeUrlHintValues(collectedHints, lastMissing.urlHints);
+    throw lastMissing;
+  }
+  throw new Error(
+    `[nflverse] Failed to fetch asset for ${
+      variants[0]?.releaseTag ?? "unknown"
+    } (season ${season}${week ? `, week ${week}` : ""})`,
+  );
+};
+
+const PLAYER_COLUMN_GROUPS: { field: string; aliases: string[] }[] = [
+  { field: "passing_yards", aliases: ["passing_yards", "pass_yards", "pass_yds"] },
+  { field: "passing_tds", aliases: ["passing_tds", "pass_tds", "pass_td"] },
+  { field: "interceptions", aliases: ["interceptions", "int", "ints", "pass_interceptions"] },
+  { field: "rushing_yards", aliases: ["rushing_yards", "rush_yards", "rush_yds"] },
+  { field: "rushing_tds", aliases: ["rushing_tds", "rush_tds", "rush_td"] },
+  { field: "receptions", aliases: ["receptions", "receiving_receptions", "rec", "rec_receptions"] },
+  { field: "receiving_yards", aliases: ["receiving_yards", "rec_yards", "rec_yds"] },
+  { field: "receiving_tds", aliases: ["receiving_tds", "rec_tds", "rec_td"] },
+  {
+    field: "fumbles_lost",
+    aliases: [
+      "fumbles_lost",
+      "fumbles_lost_total",
+      "fumbles_lost_offense",
+      "rushing_fumbles_lost",
+      "receiving_fumbles_lost",
+      "sack_fumbles_lost",
+    ],
+  },
+  { field: "field_goals_made", aliases: ["field_goals_made", "fg_made", "fg"] },
+  { field: "extra_points_made", aliases: ["extra_points_made", "xp_made", "xpt"] },
+  {
+    field: "player_id",
+    aliases: [
+      "player_id",
+      "gsis_id",
+      "gsis_it_id",
+      "gsis_player_id",
+      "nfl_id",
+      "pfr_id",
+      "pfr_player_id",
+      "esb_id",
+    ],
+  },
+  { field: "player_name", aliases: ["full_name", "player", "player_name"] },
+  { field: "team", aliases: ["team", "posteam", "team_abbr", "club_code", "team_code", "recent_team"] },
+  { field: "position", aliases: ["position", "pos", "depth_chart_position"] },
+  { field: "week", aliases: ["week", "game_week", "week_num", "week_number"] },
+  { field: "season", aliases: ["season"] },
+];
+
+const verifyPlayerStatColumns = (rows: CsvRow[], season: number) => {
+  if (!rows.length || playerColumnWarnings.has(season)) return;
+  const sample = rows[0];
+  const missing = PLAYER_COLUMN_GROUPS
+    .filter((group) => !group.aliases.some((alias) => alias in sample))
+    .map((group) => group.field);
+  if (missing.length) {
+    // eslint-disable-next-line no-console
+    console.warn("[nflverse] Missing expected stat columns", {
+      season,
+      missing,
+      headers: Object.keys(sample),
+    });
+  }
+  playerColumnWarnings.add(season);
+};
 
 const toNumber = (value: unknown): number => {
   if (value === null || value === undefined || value === "") return 0;
@@ -360,8 +581,28 @@ const matchPlayer = (lookup: RosterLookup, stat: { week: number; player_id: stri
   const name = normalize(stat.name ?? "");
   if (name) {
     const teamKey = `${name}|${(stat.team ?? "").toUpperCase()}`;
-    if (weekLookup?.byNameTeam.has(teamKey)) return weekLookup.byNameTeam.get(teamKey);
-    if (lookup.season.byNameTeam.has(teamKey)) return lookup.season.byNameTeam.get(teamKey);
+    const warnFallback = (scope: "week" | "season") => {
+      const warnKey = `${scope}|${stat.week}|${teamKey}`;
+      if (!fallbackNameTeamWarnings.has(warnKey)) {
+        fallbackNameTeamWarnings.add(warnKey);
+        // eslint-disable-next-line no-console
+        console.warn("[nflverse] Fallback roster match by name/team", {
+          scope,
+          week: stat.week,
+          name: stat.name,
+          team: stat.team,
+          player_id: stat.player_id,
+        });
+      }
+    };
+    if (weekLookup?.byNameTeam.has(teamKey)) {
+      warnFallback("week");
+      return weekLookup.byNameTeam.get(teamKey);
+    }
+    if (lookup.season.byNameTeam.has(teamKey)) {
+      warnFallback("season");
+      return lookup.season.byNameTeam.get(teamKey);
+    }
     if (weekLookup?.byName.has(name)) return weekLookup.byName.get(name);
     if (lookup.season.byName.has(name)) return lookup.season.byName.get(name);
   }
@@ -481,7 +722,27 @@ const parseTeamDefenseRow = (row: CsvRow, fallbackSeason: number): TeamDefenseIn
 
 export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
   if (playersCache.has(season)) return playersCache.get(season)!;
-  const rows = await fetchCsv(`roster_weekly_${season}`, `${RELEASE_BASE}/nflfastR-roster/roster_weekly_${season}.csv`);
+  const rows = await fetchCsvAssetVariants(
+    [
+      {
+        releaseTag: "weekly_rosters",
+        filename: `roster_week_${season}.csv.gz`,
+        url: urlWeeklyRosters(season),
+        gz: true,
+      },
+      {
+        releaseTag: "weekly_rosters",
+        filename: `roster_week_${season}.csv`,
+        url: `${RELEASE_BASE}/weekly_rosters/roster_week_${season}.csv`,
+      },
+      {
+        releaseTag: "nflfastR-roster",
+        filename: `roster_week_${season}.csv`,
+        url: `${RELEASE_BASE}/nflfastR-roster/roster_week_${season}.csv`,
+      },
+    ],
+    { season },
+  );
   const parsed = rows
     .map((row) => parseRosterRow(row, season))
     .filter((p): p is NflversePlayer => Boolean(p) && (p as NflversePlayer).season === season);
@@ -492,7 +753,28 @@ export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
 
 const loadSeasonPlayerStats = async (season: number): Promise<Map<number, NflversePlayerStat[]>> => {
   if (playerStatsSeasonCache.has(season)) return playerStatsSeasonCache.get(season)!;
-  const rows = await fetchCsv(`stats_player_week_${season}`, `${RELEASE_BASE}/nflfastR-weekly/stats_player_week_${season}.csv`);
+  const rows = await fetchCsvAssetVariants(
+    [
+      {
+        releaseTag: "stats_player",
+        filename: `stats_player_week_${season}.csv.gz`,
+        url: urlPlayerStats(season),
+        gz: true,
+      },
+      {
+        releaseTag: "stats_player",
+        filename: `stats_player_week_${season}.csv`,
+        url: `${RELEASE_BASE}/stats_player/stats_player_week_${season}.csv`,
+      },
+      {
+        releaseTag: "nflfastR-weekly",
+        filename: `stats_player_week_${season}.csv`,
+        url: `${RELEASE_BASE}/nflfastR-weekly/stats_player_week_${season}.csv`,
+      },
+    ],
+    { season },
+  );
+  verifyPlayerStatColumns(rows, season);
   const grouped = new Map<number, NflversePlayerStat[]>();
   for (const row of rows) {
     const parsed = parsePlayerStatRow(row, season);
@@ -511,7 +793,12 @@ export async function fetchWeeklyPlayerStats(season: number, week: number): Prom
 
 const loadSeasonSnapCounts = async (season: number): Promise<Map<number, DefSnapRow[]>> => {
   if (snapSeasonCache.has(season)) return snapSeasonCache.get(season)!;
-  const rows = await fetchCsv(`snap_counts_${season}`, `${RELEASE_BASE}/snap_counts/snap_counts_${season}.csv`);
+  const rows = await fetchCsvAsset({
+    releaseTag: "snap_counts",
+    filename: `snap_counts_${season}.csv`,
+    url: `${RELEASE_BASE}/snap_counts/snap_counts_${season}.csv`,
+    season,
+  });
   const grouped = new Map<number, DefSnapRow[]>();
   for (const row of rows) {
     const parsed = parseSnapRow(row, season);
@@ -531,7 +818,12 @@ export async function fetchDefensiveSnaps(season: number, week: number): Promise
 
 const loadSeasonTeamDefense = async (season: number): Promise<Map<number, TeamDefenseInput[]>> => {
   if (teamDefenseSeasonCache.has(season)) return teamDefenseSeasonCache.get(season)!;
-  const rows = await fetchCsv(`stats_team_week_${season}`, `${RELEASE_BASE}/nflfastR-weekly/stats_team_week_${season}.csv`);
+  const rows = await fetchCsvAsset({
+    releaseTag: "nflfastR-weekly",
+    filename: `stats_team_week_${season}.csv`,
+    url: `${RELEASE_BASE}/nflfastR-weekly/stats_team_week_${season}.csv`,
+    season,
+  });
   const grouped = new Map<number, TeamDefenseInput[]>();
   for (const row of rows) {
     const parsed = parseTeamDefenseRow(row, season);

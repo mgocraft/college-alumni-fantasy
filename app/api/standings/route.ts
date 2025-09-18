@@ -7,11 +7,12 @@ export const runtime = "nodejs";
 export const revalidate = 0;
 
 export async function GET() {
+  const input: Record<string, unknown> = {};
   try {
     const records = await loadRecords();
     const standings = computeStandings(records);
     return NextResponse.json({ recordsCount: records.length, standings });
   } catch (error) {
-    return respondWithError("GET /api/standings", error);
+    return respondWithError("GET /api/standings", error, { input });
   }
 }
