@@ -13,6 +13,12 @@ export default function StandingsPage() {
       setError(null);
       try {
         const response = await fetchJson<Api>("/api/standings");
+        if (response && typeof response === "object" && "error" in response) {
+          const message = typeof (response as { error?: unknown }).error === "string"
+            ? String((response as { error?: unknown }).error)
+            : "Unable to load standings";
+          throw new Error(message);
+        }
         if (!cancelled) setData(response);
       } catch (e) {
         console.error("Failed to load standings", e);

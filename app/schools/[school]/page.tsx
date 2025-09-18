@@ -20,6 +20,12 @@ export default function SchoolDetail({ params }: { params: { school: string } })
     setError(null);
     try {
       const response = await fetchJson<Api>(`/api/school/${encodeURIComponent(school)}?${q}`);
+      if (response && typeof response === "object" && "error" in response) {
+        const message = typeof (response as { error?: unknown }).error === "string"
+          ? String((response as { error?: unknown }).error)
+          : `Unable to load data for ${school}`;
+        throw new Error(message);
+      }
       setData(response);
     } catch (e) {
       console.error(`Failed to load school detail for ${school}`, e);
