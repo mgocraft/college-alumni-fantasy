@@ -1,15 +1,112 @@
+import { promises as fs } from "fs";
+import path from "path";
 
-export type MatchRecord = { season:number; week:number; format:string; mode:'weekly'|'avg'; home:string; away:string; homePoints:number; awayPoints:number; winner:'home'|'away'|'tie'; timestamp:number; };
-export type StandingsRow = { school:string; wins:number; losses:number; ties:number; pointsFor:number; pointsAgainst:number; };
+export type MatchRecord = {
+  season: number;
+  week: number;
+  format: string;
+  mode: "weekly" | "avg";
+  home: string;
+  away: string;
+  homePoints: number;
+  awayPoints: number;
+  winner: "home" | "away" | "tie";
+  timestamp: number;
+};
+
+export type StandingsRow = {
+  school: string;
+  wins: number;
+  losses: number;
+  ties: number;
+  pointsFor: number;
+  pointsAgainst: number;
+};
+
 const RECORDS_PATH = process.env.RECORDS_PATH || "data/records.json";
 const ENABLE_WRITE = (process.env.ENABLE_WRITE || "true").toLowerCase() === "true";
-import { promises as fs } from "fs";
-export async function loadRecords(): Promise<MatchRecord[]> { try { return JSON.parse(await fs.readFile(RECORDS_PATH, "utf-8")); } catch { return []; } }
-export async function saveRecord(r: MatchRecord) { if (!ENABLE_WRITE) return; const arr = await loadRecords(); arr.push(r); await fs.mkdir(RECORDS_PATH.split('/').slice(0,-1).join('/'), { recursive: true }); await fs.writeFile(RECORDS_PATH, JSON.stringify(arr,null,2), "utf-8"); }
+
+const isEnoent = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  (error as { code?: string }).code === "ENOENT";
+
+const recordsDir = () => path.dirname(path.resolve(RECORDS_PATH));
+
+export async function loadRecords(): Promise<MatchRecord[]> {
+  try {
+    const raw = await fs.readFile(RECORDS_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Invalid data in ${RECORDS_PATH}: expected an array`);
+    }
+    return parsed as MatchRecord[];
+  } catch (error) {
+    if (isEnoent(error)) return [];
+    if (error instanceof Error) {
+      throw new Error(`Failed to load records from ${RECORDS_PATH}: ${error.message}`, { cause: error });
+    }
+    throw error;
+  }
+}
+
+export async function saveRecord(record: MatchRecord) {
+  if (!ENABLE_WRITE) return;
+  const records = await loadRecords();
+  records.push(record);
+  await fs.mkdir(recordsDir(), { recursive: true });
+  await fs.writeFile(RECORDS_PATH, JSON.stringify(records, null, 2), "utf-8");
+}
+
 export function computeStandings(records: MatchRecord[]): StandingsRow[] {
-  const map = new Map<string, StandingsRow>(); const row = (s:string)=> map.get(s) ?? (map.set(s,{school:s,wins:0,losses:0,ties:0,pointsFor:0,pointsAgainst:0}), map.get(s)!);
-  for (const r of records) { const h=row(r.home), a=row(r.away); h.pointsFor+=r.homePoints; h.pointsAgainst+=r.awayPoints; a.pointsFor+=r.awayPoints; a.pointsAgainst+=r.homePoints;
-    if (r.winner==='home'){h.wins++; a.losses++;} else if(r.winner==='away'){a.wins++; h.losses++;} else {h.ties++; a.ties++;} }
-  return Array.from(map.values()).sort((x,y)=>{ const xp=(x.wins+x.ties*0.5)/Math.max(1,x.wins+x.losses+x.ties); const yp=(y.wins+y.ties*0.5)/Math.max(1,y.wins+y.losses+y.ties);
-    if (yp!==xp) return yp-xp; const xd=x.pointsFor-x.pointsAgainst, yd=y.pointsFor-y.pointsAgainst; return yd-xd; });
+  const rows = new Map<string, StandingsRow>();
+
+  const ensureRow = (school: string): StandingsRow => {
+    if (!rows.has(school)) {
+      rows.set(school, {
+        school,
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        pointsFor: 0,
+        pointsAgainst: 0,
+      });
+    }
+    return rows.get(school)!;
+  };
+
+  for (const record of records) {
+    const home = ensureRow(record.home);
+    const away = ensureRow(record.away);
+
+    home.pointsFor += record.homePoints;
+    home.pointsAgainst += record.awayPoints;
+    away.pointsFor += record.awayPoints;
+    away.pointsAgainst += record.homePoints;
+
+    if (record.winner === "home") {
+      home.wins += 1;
+      away.losses += 1;
+    } else if (record.winner === "away") {
+      away.wins += 1;
+      home.losses += 1;
+    } else {
+      home.ties += 1;
+      away.ties += 1;
+    }
+  }
+
+  const toWinPct = (row: StandingsRow) => {
+    const games = row.wins + row.losses + row.ties;
+    if (games === 0) return 0;
+    return (row.wins + row.ties * 0.5) / games;
+  };
+
+  return Array.from(rows.values()).sort((a, b) => {
+    const pctDiff = toWinPct(b) - toWinPct(a);
+    if (pctDiff !== 0) return pctDiff;
+    const diffA = a.pointsFor - a.pointsAgainst;
+    const diffB = b.pointsFor - b.pointsAgainst;
+    return diffB - diffA;
+  });
 }

@@ -1,11 +1,32 @@
 
 'use client';
 import { useEffect, useState } from "react";
+import { fetchJson } from "@/lib/clientFetch";
 type Row = { school:string; wins:number; losses:number; ties:number; pointsFor:number; pointsAgainst:number };
 type Api = { recordsCount:number; standings: Row[] };
 export default function StandingsPage() {
   const [data,setData]=useState<Api|null>(null), [loading,setLoading]=useState(true), [error,setError]=useState<string|null>(null);
-  useEffect(()=>{ fetch('/api/standings').then(r=>r.json()).then(j=>{ setData(j); setLoading(false); }).catch(e=>{ setError(String(e)); setLoading(false); }); }, []);
+  useEffect(()=>{
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetchJson<Api>("/api/standings");
+        if (!cancelled) setData(response);
+      } catch (e) {
+        console.error("Failed to load standings", e);
+        if (!cancelled) {
+          setData(null);
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, []);
   if (loading) return <div className="card"><h2>Loading Standings…</h2></div>;
   if (error) return <div className="card"><h2>Error</h2><pre>{error}</pre></div>;
   return (<div className="card"><h2>Standings</h2><div className="badge">{data?.recordsCount ?? 0} recorded games</div>
