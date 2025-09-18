@@ -14,6 +14,12 @@ export default function SchoolsPage() {
       setError(null);
       try {
         const response = await fetchJson<Api>(`/api/scores?season=2025&week=1&format=ppr&mode=weekly&includeK=true&defense=none`);
+        if (response && typeof response === "object" && "error" in response) {
+          const message = typeof (response as { error?: unknown }).error === "string"
+            ? String((response as { error?: unknown }).error)
+            : "Unable to load school list";
+          throw new Error(message);
+        }
         if (!cancelled) {
           setData(response);
         }

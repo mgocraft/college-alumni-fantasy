@@ -15,6 +15,12 @@ export default function RankingsPage() {
     try {
       const q = new URLSearchParams({ season, week, format, mode, includeK: String(true), defense: "none" }).toString();
       const response = await fetchJson<Api>(`/api/scores?${q}`);
+      if (response && typeof response === "object" && "error" in response) {
+        const message = typeof (response as { error?: unknown }).error === "string"
+          ? String((response as { error?: unknown }).error)
+          : "Unable to load rankings";
+        throw new Error(message);
+      }
       setData(response);
     } catch (e) {
       console.error("Failed to load rankings", e);

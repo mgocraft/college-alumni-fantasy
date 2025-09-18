@@ -18,6 +18,9 @@ export const revalidate = 0;
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const input: Record<string, unknown> = {
+    query: Object.fromEntries(url.searchParams.entries()),
+  };
   try {
     const season = parseIntegerParam(url, "season", 2025, { min: 1900, max: 2100 });
     const week = parseIntegerParam(url, "week", 1, { min: 1, max: 30 });
@@ -27,10 +30,12 @@ export async function GET(req: Request) {
     const defense = parseEnumParam(url, "defense", ["none", "approx"] as const, "none");
     const home = parseRequiredString(url, "home", { maxLength: 120 });
     const away = parseRequiredString(url, "away", { maxLength: 120 });
+    Object.assign(input, { season, week, format, mode, includeK, defense, home, away });
     if (home.toLowerCase() === away.toLowerCase()) {
       throw new HttpError(400, "home and away must be different schools");
     }
     const doRecord = parseBooleanParam(url, "record", false);
+    input.record = doRecord;
     const includeDefense = defense === "approx";
     const weekPromise = loadWeek({ season, week, format, includeDefense });
     const averagesPromise: Promise<Record<string, number> | undefined> =
@@ -74,6 +79,6 @@ export async function GET(req: Request) {
     }
     return NextResponse.json(payload);
   } catch (error) {
-    return respondWithError("GET /api/matchup", error);
+    return respondWithError("GET /api/matchup", error, { input });
   }
 }

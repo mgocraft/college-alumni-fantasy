@@ -15,6 +15,9 @@ export const revalidate = Number(process.env.CACHE_SECONDS ?? 3600);
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const input: Record<string, unknown> = {
+    query: Object.fromEntries(url.searchParams.entries()),
+  };
   try {
     const season = parseIntegerParam(url, "season", 2025, { min: 1900, max: 2100 });
     const week = parseIntegerParam(url, "week", 1, { min: 1, max: 30 });
@@ -22,6 +25,7 @@ export async function GET(req: Request) {
     const mode = parseEnumParam(url, "mode", ["weekly", "avg"] as const, "weekly");
     const includeK = parseBooleanParam(url, "includeK", true);
     const defense = parseEnumParam(url, "defense", ["none", "approx"] as const, "none");
+    Object.assign(input, { season, week, format, mode, includeK, defense });
     const includeDefense = defense === "approx";
     const weekPromise = loadWeek({ season, week, format, includeDefense });
     const averagesPromise: Promise<Record<string, number> | undefined> =
@@ -30,6 +34,6 @@ export async function GET(req: Request) {
     const bySchool = await aggregateByCollegeMode(leaders, week, format, mode, averages, { includeK, defense, defenseData });
     return NextResponse.json({ season, week, format, mode, includeK, defense, count: bySchool.length, results: bySchool });
   } catch (error) {
-    return respondWithError("GET /api/scores", error);
+    return respondWithError("GET /api/scores", error, { input });
   }
 }

@@ -26,6 +26,12 @@ export default function MatchupsPage() {
       setLoading(true); setError(null);
       const q = new URLSearchParams({ season, week, format, mode, includeK: String(includeK), defense, home, away, record: String(record) }).toString();
       const response = await fetchJson<MatchResp>(`/api/matchup?${q}`);
+      if (response && typeof response === "object" && "error" in response) {
+        const message = typeof (response as { error?: unknown }).error === "string"
+          ? String((response as { error?: unknown }).error)
+          : "Unable to simulate matchup";
+        throw new Error(message);
+      }
       setData(response);
     } catch (e) {
       console.error("Failed to simulate matchup", e);
