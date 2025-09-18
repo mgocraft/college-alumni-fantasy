@@ -690,6 +690,14 @@ export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
 const loadSeasonPlayerStats = async (season: number): Promise<Map<number, NflversePlayerStat[]>> => {
   if (playerStatsSeasonCache.has(season)) return playerStatsSeasonCache.get(season)!;
 
+  const rows = await fetchCsvAsset({
+    releaseTag: "stats_player",
+    filename: `stats_player_week_${season}.csv.gz`,
+    url: urlPlayerStats(season),
+    season,
+    gz: true,
+  });
+
   verifyPlayerStatColumns(rows, season);
   const grouped = new Map<number, NflversePlayerStat[]>();
   for (const row of rows) {
