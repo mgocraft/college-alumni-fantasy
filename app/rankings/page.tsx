@@ -2,24 +2,37 @@
 'use client';
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { fetchJson } from "@/lib/clientFetch";
 type Row = { school:string; totalPoints:number; performers:any[] };
 type Api = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; count:number; results: Row[] };
 export default function RankingsPage() {
   const [season,setSeason]=useState("2025"), [week,setWeek]=useState("1"), [format,setFormat]=useState("ppr");
   const [mode,setMode]=useState<"weekly"|"avg">("weekly");
   const [data,setData]=useState<Api|null>(null), [loading,setLoading]=useState(false), [error,setError]=useState<string|null>(null);
-  const load=()=>{ setLoading(true); setError(null);
-    const q=new URLSearchParams({ season, week, format, mode, includeK:String(true), defense:'none' }).toString();
-    fetch(`/api/scores?${q}`).then(r=>r.json()).then(j=>{ setData(j); setLoading(false); }).catch(e=>{ setError(String(e)); setLoading(false); });
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const q = new URLSearchParams({ season, week, format, mode, includeK: String(true), defense: "none" }).toString();
+      const response = await fetchJson<Api>(`/api/scores?${q}`);
+      setData(response);
+    } catch (e) {
+      console.error("Failed to load rankings", e);
+      setData(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   };
-  useEffect(()=>{ load(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(()=>{ void load(); }, []);
   return (<div className="card"><h2>Rankings — Week {data?.week ?? week} ({data?.format?.toUpperCase() ?? format.toUpperCase()})</h2>
     <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, margin:'12px 0' }}>
       <label>Season<input type="number" value={season} onChange={e=>setSeason(e.target.value)} style={{ marginLeft:8, width:100 }}/></label>
       <label>Week<input type="number" min={1} max={18} value={week} onChange={e=>setWeek(e.target.value)} style={{ marginLeft:8, width:80 }}/></label>
       <label>Format<select value={format} onChange={e=>setFormat(e.target.value)} style={{ marginLeft:8 }}><option value="ppr">PPR</option><option value="half-ppr">Half-PPR</option><option value="standard">Standard</option></select></label>
       <label>Selection Mode<select value={mode} onChange={e=>setMode(e.target.value as any)} style={{ marginLeft:8 }}><option value="weekly">Weekly best</option><option value="avg">Manager (avg to date)</option></select></label>
-      <button className="btn" onClick={load}>Update</button>
+      <button className="btn" onClick={load} disabled={loading}>Update</button>
       <Link className="btn" href="/schools">Browse All</Link>
     </div>
     {loading && <div>Loading…</div>}{error && <div style={{color:'salmon'}}><b>Error:</b> {error}</div>}

@@ -1,6 +1,7 @@
 
 'use client';
 import { useState } from "react";
+import { fetchJson } from "@/lib/clientFetch";
 type Performer = { name:string; position:string; team?:string; points:number; meta?:any };
 type MatchResp = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx';
   home:string; away:string; homePoints:number; awayPoints:number; winner:'home'|'away'|'tie'; homeLineup:Performer[]; awayLineup:Performer[] };
@@ -23,10 +24,14 @@ export default function MatchupsPage() {
   const simulate = async () => {
     try {
       setLoading(true); setError(null);
-      const q = new URLSearchParams({ season, week, format, mode, includeK:String(includeK), defense, home, away, record:String(record) }).toString();
-      const r = await fetch(`/api/matchup?${q}`); const j = await r.json(); if (!r.ok) throw new Error(j?.error || r.statusText);
-      setData(j);
-    } catch (e:any) { setError(String(e.message||e)); } finally { setLoading(false); }
+      const q = new URLSearchParams({ season, week, format, mode, includeK: String(includeK), defense, home, away, record: String(record) }).toString();
+      const response = await fetchJson<MatchResp>(`/api/matchup?${q}`);
+      setData(response);
+    } catch (e) {
+      console.error("Failed to simulate matchup", e);
+      setData(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setLoading(false); }
   };
 
   return (<div className="card">

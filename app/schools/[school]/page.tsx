@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { fetchJson } from "@/lib/clientFetch";
 type SeriesPoint = { week:number; totalPoints:number; performers:{name:string; position:string; team?:string; points:number; meta?:any}[] };
 type Api = { school:string; season:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; series: SeriesPoint[] };
 export default function SchoolDetail({ params }: { params: { school: string } }) {
@@ -12,11 +13,24 @@ export default function SchoolDetail({ params }: { params: { school: string } })
   const [defense,setDefense]=useState<'none'|'approx'>((sp.get("defense") as any)??'none');
   const [startWeek,setStartWeek]=useState(sp.get("startWeek")??"1"); const [endWeek,setEndWeek]=useState(sp.get("endWeek")??"18");
   const [data,setData]=useState<Api|null>(null), [loading,setLoading]=useState(true), [error,setError]=useState<string|null>(null);
-  const refresh=()=>{ const q=new URLSearchParams({ season, startWeek, endWeek, format, mode, includeK:String(includeK), defense }).toString();
-    fetch(`/api/school/${encodeURIComponent(school)}?${q}`).then(r=>r.json()).then(j=>{ setData(j); setLoading(false); }).catch(e=>{ setError(String(e)); setLoading(false); });
+  const refresh = async () => {
+    const q = new URLSearchParams({ season, startWeek, endWeek, format, mode, includeK: String(includeK), defense }).toString();
     router.replace(`/schools/${encodeURIComponent(school)}?${q}`);
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetchJson<Api>(`/api/school/${encodeURIComponent(school)}?${q}`);
+      setData(response);
+    } catch (e) {
+      console.error(`Failed to load school detail for ${school}`, e);
+      setData(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   };
-  useEffect(()=>{ setLoading(true); setError(null); refresh(); /* eslint-disable-next-line */ }, [school]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(()=>{ void refresh(); }, [school]);
   const chartData = (data?.series??[]).map(p=>({ week: p.week, points: p.totalPoints }));
 
   const renderPerformer = (p: any) => {

@@ -1,5 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { HttpError } from "./api";
+import { fetchWithRetry } from "./http";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
 
@@ -12,6 +14,20 @@ const HEADERS: Record<string, string> = {
   "User-Agent": process.env.NFLVERSE_USER_AGENT || DEFAULT_USER_AGENT,
   Accept: "text/csv,application/octet-stream",
 };
+
+const toPositiveInt = (value: string | undefined, fallback: number): number => {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? Math.trunc(num) : fallback;
+};
+
+const toPositiveMs = (value: string | undefined, fallback: number): number => {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : fallback;
+};
+
+const NFLVERSE_FETCH_ATTEMPTS = toPositiveInt(process.env.NFLVERSE_FETCH_ATTEMPTS ?? process.env.FETCH_ATTEMPTS, 3);
+const NFLVERSE_FETCH_TIMEOUT_MS = toPositiveMs(process.env.NFLVERSE_FETCH_TIMEOUT_MS ?? process.env.FETCH_TIMEOUT_MS, 20000);
+const NFLVERSE_FETCH_RETRY_DELAY_MS = toPositiveMs(process.env.NFLVERSE_FETCH_RETRY_DELAY_MS ?? process.env.FETCH_RETRY_DELAY_MS, 750);
 
 type CsvRow = Record<string, string>;
 
@@ -179,11 +195,28 @@ const writeCache = async (key: string, contents: string) => {
 async function fetchCsv(key: string, url: string): Promise<CsvRow[]> {
   const cached = await readCache(key);
   if (cached) return parseCsv(cached);
-  const res = await fetch(url, { headers: HEADERS, cache: "no-store" });
-  if (!res.ok) throw new Error(`nflverse ${res.status} for ${url}`);
-  const text = await res.text();
-  await writeCache(key, text);
-  return parseCsv(text);
+  try {
+    const response = await fetchWithRetry(
+      url,
+      { headers: HEADERS, cache: "no-store" },
+      {
+        attempts: NFLVERSE_FETCH_ATTEMPTS,
+        timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS,
+        retryDelayMs: NFLVERSE_FETCH_RETRY_DELAY_MS,
+      },
+    );
+    const text = await response.text();
+    await writeCache(key, text);
+    return parseCsv(text);
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
+    }
+    if (error instanceof Error) {
+      throw new Error(`[nflverse] ${error.message}`, { cause: error });
+    }
+    throw new Error(`[nflverse] ${String(error)}`);
+  }
 }
 
 const toNumber = (value: unknown): number => {
