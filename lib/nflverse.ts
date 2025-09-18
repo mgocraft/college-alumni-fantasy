@@ -2,7 +2,9 @@ import { promises as fs } from "fs";
 import path from "path";
 import { gunzipSync } from "zlib";
 import { HttpError } from "./api";
+
 import { createErrorWithCause } from "./errors";
+
 import { fetchBuffer } from "./http";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
@@ -132,7 +134,9 @@ const parseCsvSafe = (csv: string, context: string): CsvRow[] => {
   } catch (error) {
     logCsvSnapshot(csv, context);
     const err = error instanceof Error ? error : new Error(String(error));
+
     throw createErrorWithCause(`[nflverse] Failed to parse CSV for ${context}: ${err.message}`, err);
+
   }
 };
 
@@ -285,7 +289,9 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
           throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
         }
         const err = error instanceof Error ? error : new Error(String(error));
+
         throw createErrorWithCause(`[nflverse] HEAD ${url} failed: ${err.message}`, err);
+
       }
     }
     try {
@@ -299,6 +305,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
         throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
       }
       const err = error instanceof Error ? error : new Error(String(error));
+
       throw createErrorWithCause(`[nflverse] Failed to fetch ${url}: ${err.message}`, err);
     }
     await writeCachedBuffer(releaseTag, filename, raw);
@@ -319,6 +326,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
   }
   return parseCsvSafe(text, `${releaseTag}/${filename}`);
 }
+
 
 const PLAYER_COLUMN_GROUPS: { field: string; aliases: string[] }[] = [
   { field: "passing_yards", aliases: ["passing_yards", "pass_yards", "pass_yds"] },
@@ -661,6 +669,8 @@ const parseTeamDefenseRow = (row: CsvRow, fallbackSeason: number): TeamDefenseIn
 
 export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
   if (playersCache.has(season)) return playersCache.get(season)!;
+
+
   const rows = await fetchCsvAsset({
     releaseTag: "weekly_rosters",
     filename: `roster_week_${season}.csv.gz`,
@@ -668,6 +678,7 @@ export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
     season,
     gz: true,
   });
+
   const parsed = rows
     .map((row) => parseRosterRow(row, season))
     .filter((p): p is NflversePlayer => Boolean(p) && (p as NflversePlayer).season === season);
@@ -678,13 +689,7 @@ export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
 
 const loadSeasonPlayerStats = async (season: number): Promise<Map<number, NflversePlayerStat[]>> => {
   if (playerStatsSeasonCache.has(season)) return playerStatsSeasonCache.get(season)!;
-  const rows = await fetchCsvAsset({
-    releaseTag: "stats_player",
-    filename: `stats_player_week_${season}.csv.gz`,
-    url: urlPlayerStats(season),
-    season,
-    gz: true,
-  });
+
   verifyPlayerStatColumns(rows, season);
   const grouped = new Map<number, NflversePlayerStat[]>();
   for (const row of rows) {
