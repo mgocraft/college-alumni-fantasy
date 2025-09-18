@@ -124,8 +124,11 @@ export async function GET(req: Request) {
             const message = typeof (payload as { error?: unknown }).error === "string"
               ? String((payload as { error?: unknown }).error)
               : JSON.stringify((payload as { error?: unknown }).error);
-            const hints = Array.isArray((payload as { urlHints?: unknown }).urlHints)
-              ? (payload as { urlHints?: unknown }).urlHints!.map((hint: unknown) => String(hint))
+
+            const urlHintsValue = (payload as { urlHints?: unknown }).urlHints;
+            const hints = Array.isArray(urlHintsValue)
+              ? urlHintsValue.map((hint: unknown) => String(hint))
+
               : undefined;
             results[currentIndex] = {
               url: href,

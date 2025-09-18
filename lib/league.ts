@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { createErrorWithCause } from "./errors";
 
 export type MatchRecord = {
   season: number;
@@ -44,7 +45,7 @@ export async function loadRecords(): Promise<MatchRecord[]> {
   } catch (error) {
     if (isEnoent(error)) return [];
     if (error instanceof Error) {
-      throw new Error(`Failed to load records from ${RECORDS_PATH}: ${error.message}`, { cause: error });
+      throw createErrorWithCause(`Failed to load records from ${RECORDS_PATH}: ${error.message}`, error);
     }
     throw error;
   }

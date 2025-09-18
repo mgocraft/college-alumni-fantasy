@@ -2,6 +2,9 @@ import { promises as fs } from "fs";
 import path from "path";
 import { gunzipSync } from "zlib";
 import { HttpError } from "./api";
+
+import { createErrorWithCause } from "./errors";
+
 import { fetchBuffer } from "./http";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
@@ -131,7 +134,9 @@ const parseCsvSafe = (csv: string, context: string): CsvRow[] => {
   } catch (error) {
     logCsvSnapshot(csv, context);
     const err = error instanceof Error ? error : new Error(String(error));
-    throw new Error(`[nflverse] Failed to parse CSV for ${context}: ${err.message}`, { cause: err });
+
+    throw createErrorWithCause(`[nflverse] Failed to parse CSV for ${context}: ${err.message}`, err);
+
   }
 };
 
@@ -284,7 +289,9 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
           throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
         }
         const err = error instanceof Error ? error : new Error(String(error));
-        throw new Error(`[nflverse] HEAD ${url} failed: ${err.message}`, { cause: err });
+
+        throw createErrorWithCause(`[nflverse] HEAD ${url} failed: ${err.message}`, err);
+
       }
     }
     try {
@@ -298,7 +305,8 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
         throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
       }
       const err = error instanceof Error ? error : new Error(String(error));
-      throw new Error(`[nflverse] Failed to fetch ${url}: ${err.message}`, { cause: err });
+
+      throw createErrorWithCause(`[nflverse] Failed to fetch ${url}: ${err.message}`, err);
     }
     await writeCachedBuffer(releaseTag, filename, raw);
   }
@@ -311,7 +319,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
       const err = error instanceof Error ? error : new Error(String(error));
       // eslint-disable-next-line no-console
       console.error(`[nflverse] Failed to unzip ${releaseTag}/${filename}`, err);
-      throw new Error(`[nflverse] Failed to unzip ${releaseTag}/${filename}: ${err.message}`, { cause: err });
+      throw createErrorWithCause(`[nflverse] Failed to unzip ${releaseTag}/${filename}: ${err.message}`, err);
     }
   } else {
     text = source.toString("utf-8");
@@ -319,67 +327,6 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
   return parseCsvSafe(text, `${releaseTag}/${filename}`);
 }
 
-type CsvAssetVariant = {
-  releaseTag: string;
-  filename: string;
-  url: string;
-  gz?: boolean;
-  requireHead?: boolean;
-};
-
-const mergeUrlHintValues = (...sources: (string[] | undefined)[]): string[] => {
-  const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const source of sources) {
-    if (!source) continue;
-    for (const hint of source) {
-      if (!hint) continue;
-      const trimmed = hint.trim();
-      if (!trimmed || seen.has(trimmed)) continue;
-      seen.add(trimmed);
-      merged.push(trimmed);
-    }
-  }
-  return merged;
-};
-
-const fetchCsvAssetVariants = async (
-  variants: CsvAssetVariant[],
-  { season, week }: { season: number; week?: number },
-): Promise<CsvRow[]> => {
-  const collectedHints: string[] = [];
-  let lastMissing: NflverseAssetMissingError | undefined;
-  for (const variant of variants) {
-    try {
-      return await fetchCsvAsset({
-        releaseTag: variant.releaseTag,
-        filename: variant.filename,
-        url: variant.url,
-        season,
-        week,
-        gz: variant.gz,
-        requireHead: variant.requireHead,
-      });
-    } catch (error) {
-      if (error instanceof NflverseAssetMissingError) {
-        collectedHints.push(error.url);
-        if (error.urlHints) collectedHints.push(...error.urlHints);
-        lastMissing = error;
-        continue;
-      }
-      throw error;
-    }
-  }
-  if (lastMissing) {
-    lastMissing.urlHints = mergeUrlHintValues(collectedHints, lastMissing.urlHints);
-    throw lastMissing;
-  }
-  throw new Error(
-    `[nflverse] Failed to fetch asset for ${
-      variants[0]?.releaseTag ?? "unknown"
-    } (season ${season}${week ? `, week ${week}` : ""})`,
-  );
-};
 
 const PLAYER_COLUMN_GROUPS: { field: string; aliases: string[] }[] = [
   { field: "passing_yards", aliases: ["passing_yards", "pass_yards", "pass_yds"] },
@@ -722,27 +669,16 @@ const parseTeamDefenseRow = (row: CsvRow, fallbackSeason: number): TeamDefenseIn
 
 export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
   if (playersCache.has(season)) return playersCache.get(season)!;
-  const rows = await fetchCsvAssetVariants(
-    [
-      {
-        releaseTag: "weekly_rosters",
-        filename: `roster_week_${season}.csv.gz`,
-        url: urlWeeklyRosters(season),
-        gz: true,
-      },
-      {
-        releaseTag: "weekly_rosters",
-        filename: `roster_week_${season}.csv`,
-        url: `${RELEASE_BASE}/weekly_rosters/roster_week_${season}.csv`,
-      },
-      {
-        releaseTag: "nflfastR-roster",
-        filename: `roster_week_${season}.csv`,
-        url: `${RELEASE_BASE}/nflfastR-roster/roster_week_${season}.csv`,
-      },
-    ],
-    { season },
-  );
+
+
+  const rows = await fetchCsvAsset({
+    releaseTag: "weekly_rosters",
+    filename: `roster_week_${season}.csv.gz`,
+    url: urlWeeklyRosters(season),
+    season,
+    gz: true,
+  });
+
   const parsed = rows
     .map((row) => parseRosterRow(row, season))
     .filter((p): p is NflversePlayer => Boolean(p) && (p as NflversePlayer).season === season);
@@ -753,27 +689,7 @@ export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
 
 const loadSeasonPlayerStats = async (season: number): Promise<Map<number, NflversePlayerStat[]>> => {
   if (playerStatsSeasonCache.has(season)) return playerStatsSeasonCache.get(season)!;
-  const rows = await fetchCsvAssetVariants(
-    [
-      {
-        releaseTag: "stats_player",
-        filename: `stats_player_week_${season}.csv.gz`,
-        url: urlPlayerStats(season),
-        gz: true,
-      },
-      {
-        releaseTag: "stats_player",
-        filename: `stats_player_week_${season}.csv`,
-        url: `${RELEASE_BASE}/stats_player/stats_player_week_${season}.csv`,
-      },
-      {
-        releaseTag: "nflfastR-weekly",
-        filename: `stats_player_week_${season}.csv`,
-        url: `${RELEASE_BASE}/nflfastR-weekly/stats_player_week_${season}.csv`,
-      },
-    ],
-    { season },
-  );
+
   verifyPlayerStatColumns(rows, season);
   const grouped = new Map<number, NflversePlayerStat[]>();
   for (const row of rows) {
