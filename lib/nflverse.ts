@@ -236,6 +236,7 @@ const snapSeasonCache = new Map<number, Map<number, DefSnapRow[]>>();
 const teamDefenseSeasonCache = new Map<number, Map<number, TeamDefenseInput[]>>();
 const fallbackNameTeamWarnings = new Set<string>();
 const playerColumnWarnings = new Set<number>();
+const rosterFallbackWarnings = new Set<number>();
 
 const getCachePath = (releaseTag: string, filename: string) => path.join(CACHE_ROOT, releaseTag, filename);
 
@@ -446,6 +447,20 @@ const buildRosterLookup = (players: NflversePlayer[]): RosterLookup => {
   return { byWeek, season };
 };
 
+const buildLookupFromStats = (season: number, stats: NflversePlayerStat[]): RosterLookup => {
+  const players: NflversePlayer[] = stats.map((stat) => ({
+    season,
+    week: Number(stat.week ?? 0) || 0,
+    player_id: String(stat.player_id),
+    full_name: stat.name || "",
+    position: stat.position || undefined,
+    team: stat.team || undefined,
+    college: null,
+    college_name: null,
+  }));
+  return buildRosterLookup(players);
+};
+
 const resolvePlayerId = (values: string[], fallback: string): string => {
   const [first] = unique(values.filter(v => v && v.trim().length));
   if (first && first.trim().length) return first.trim();
@@ -510,7 +525,11 @@ const getRosterLookup = async (season: number): Promise<RosterLookup> => {
   return lookup;
 };
 
-const matchPlayer = (lookup: RosterLookup, stat: { week: number; player_id: string; alt_ids: string[]; name: string; team: string }): NflversePlayer | undefined => {
+const matchPlayer = (
+  lookup: RosterLookup | null,
+  stat: { week: number; player_id: string; alt_ids: string[]; name: string; team: string },
+): NflversePlayer | undefined => {
+  if (!lookup) return undefined;
   const weekLookup = lookup.byWeek.get(Number(stat.week));
   const candidates = unique([stat.player_id, ...stat.alt_ids]);
   for (const id of candidates) {
@@ -828,7 +847,12 @@ const buildDefenseWeek = (snaps: DefSnapRow[], teams: TeamDefenseInput[]): Defen
   return { teams: resultTeams };
 };
 
-const ensureDefenseLeaders = (leaders: Leader[], leaderMap: Map<string, Leader>, snaps: DefSnapRow[], lookup: RosterLookup) => {
+const ensureDefenseLeaders = (
+  leaders: Leader[],
+  leaderMap: Map<string, Leader>,
+  snaps: DefSnapRow[],
+  lookup: RosterLookup | null,
+) => {
   for (const snap of snaps) {
     const id = snap.player_id;
     if (!id) continue;
@@ -865,10 +889,24 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
   const week = options.week;
   const format = options.format;
   const includeDefense = options.includeDefense ?? false;
-  const [stats, lookup] = await Promise.all([
-    fetchWeeklyPlayerStats(season, week),
-    getRosterLookup(season),
-  ]);
+  const stats = await fetchWeeklyPlayerStats(season, week);
+  let lookup: RosterLookup | null = null;
+  try {
+    lookup = await getRosterLookup(season);
+  } catch (error) {
+    if (error instanceof NflverseAssetMissingError) {
+      if (!rosterFallbackWarnings.has(season)) {
+        rosterFallbackWarnings.add(season);
+        // eslint-disable-next-line no-console
+        console.warn("[nflverse] Weekly roster missing; using stat-derived fallback", {
+          season,
+        });
+      }
+      lookup = buildLookupFromStats(season, stats);
+    } else {
+      throw error;
+    }
+  }
   const leaders: Leader[] = [];
   const leaderMap = new Map<string, Leader>();
   for (const stat of stats) {
