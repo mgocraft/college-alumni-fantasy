@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { gunzipSync } from "zlib";
 import { HttpError } from "./api";
+import { createErrorWithCause } from "./errors";
 import { fetchBuffer } from "./http";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
@@ -131,7 +132,7 @@ const parseCsvSafe = (csv: string, context: string): CsvRow[] => {
   } catch (error) {
     logCsvSnapshot(csv, context);
     const err = error instanceof Error ? error : new Error(String(error));
-    throw new Error(`[nflverse] Failed to parse CSV for ${context}: ${err.message}`, { cause: err });
+    throw createErrorWithCause(`[nflverse] Failed to parse CSV for ${context}: ${err.message}`, err);
   }
 };
 
@@ -284,7 +285,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
           throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
         }
         const err = error instanceof Error ? error : new Error(String(error));
-        throw new Error(`[nflverse] HEAD ${url} failed: ${err.message}`, { cause: err });
+        throw createErrorWithCause(`[nflverse] HEAD ${url} failed: ${err.message}`, err);
       }
     }
     try {
@@ -298,7 +299,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
         throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
       }
       const err = error instanceof Error ? error : new Error(String(error));
-      throw new Error(`[nflverse] Failed to fetch ${url}: ${err.message}`, { cause: err });
+      throw createErrorWithCause(`[nflverse] Failed to fetch ${url}: ${err.message}`, err);
     }
     await writeCachedBuffer(releaseTag, filename, raw);
   }
@@ -311,7 +312,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
       const err = error instanceof Error ? error : new Error(String(error));
       // eslint-disable-next-line no-console
       console.error(`[nflverse] Failed to unzip ${releaseTag}/${filename}`, err);
-      throw new Error(`[nflverse] Failed to unzip ${releaseTag}/${filename}: ${err.message}`, { cause: err });
+      throw createErrorWithCause(`[nflverse] Failed to unzip ${releaseTag}/${filename}: ${err.message}`, err);
     }
   } else {
     text = source.toString("utf-8");
