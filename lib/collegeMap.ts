@@ -787,7 +787,7 @@ export function resolveCollege(leader: Leader): string {
   }
 
   return "Unknown";
-=======
+
   const condensed = lower.replace(/[\s./_-]+/g, "");
   if (!condensed.length) return null;
   if (condensed.startsWith("unknown")) return null;
