@@ -7,6 +7,7 @@ import { HttpError } from "./api";
 import { createErrorWithCause } from "./errors";
 
 import { fetchBuffer } from "./http";
+import { resolveCollege as resolveCollegeForLeader } from "./collegeMap";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
 
@@ -469,16 +470,41 @@ const buildRosterLookup = (players: NflversePlayer[]): RosterLookup => {
 };
 
 const buildLookupFromStats = (season: number, stats: NflversePlayerStat[]): RosterLookup => {
-  const players: NflversePlayer[] = stats.map((stat) => ({
-    season,
-    week: Number(stat.week ?? 0) || 0,
-    player_id: String(stat.player_id),
-    full_name: stat.name || "",
-    position: stat.position || undefined,
-    team: stat.team || undefined,
-    college: null,
-    college_name: null,
-  }));
+  const players: NflversePlayer[] = stats.map((stat) => {
+    const leaderTemplate: Leader = {
+      player_id: stat.player_id,
+      full_name: stat.name || "",
+      position: stat.position || "",
+      team: stat.team || undefined,
+      points: 0,
+    };
+    const idCandidates = unique([stat.player_id, ...(stat.alt_ids ?? [])]);
+    let derivedCollege = "Unknown";
+    for (const candidate of idCandidates) {
+      if (!candidate) continue;
+      const resolved = resolveCollegeForLeader({
+        ...leaderTemplate,
+        player_id: candidate,
+      } as Leader);
+      if (resolved && resolved !== "Unknown") {
+        derivedCollege = resolved;
+        break;
+      }
+    }
+    if (!derivedCollege || derivedCollege === "Unknown") {
+      derivedCollege = resolveCollegeForLeader(leaderTemplate);
+    }
+    return {
+      season,
+      week: Number(stat.week ?? 0) || 0,
+      player_id: String(stat.player_id),
+      full_name: stat.name || "",
+      position: stat.position || undefined,
+      team: stat.team || undefined,
+      college: derivedCollege,
+      college_name: derivedCollege,
+    };
+  });
   return buildRosterLookup(players);
 };
 
