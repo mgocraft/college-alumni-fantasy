@@ -1,4 +1,5 @@
 import { promises as fs } from "fs";
+import os from "os";
 import path from "path";
 import { gunzipSync } from "zlib";
 import { HttpError } from "./api";
@@ -13,9 +14,29 @@ const RELEASE_BASE = "https://github.com/nflverse/nflverse-data/releases/downloa
 const DEFAULT_USER_AGENT = "college-alumni-fantasy/1.0 (+https://github.com/)";
 const CACHE_SECONDS = Number(process.env.CACHE_SECONDS ?? 3600);
 const CACHE_MS = CACHE_SECONDS > 0 ? CACHE_SECONDS * 1000 : 0;
-const CACHE_ROOT = process.env.NFLVERSE_CACHE_DIR
-  ? path.resolve(process.env.NFLVERSE_CACHE_DIR)
-  : path.join(process.cwd(), ".next", "cache", "nflverse");
+const resolveCacheRoot = (): string => {
+  const configured = process.env.NFLVERSE_CACHE_DIR?.trim();
+  if (configured) {
+    const absolute = path.resolve(configured);
+    if (!process.env.NFLVERSE_CACHE_DIR || process.env.NFLVERSE_CACHE_DIR !== absolute) {
+      process.env.NFLVERSE_CACHE_DIR = absolute;
+    }
+    return absolute;
+  }
+
+  const nextCache = process.env.NEXT_CACHE_DIR?.trim();
+  if (nextCache) {
+    const combined = path.resolve(path.join(nextCache, "nflverse"));
+    process.env.NFLVERSE_CACHE_DIR = combined;
+    return combined;
+  }
+
+  const fallback = path.join(os.tmpdir(), "next-cache", "nflverse");
+  process.env.NFLVERSE_CACHE_DIR = fallback;
+  return fallback;
+};
+
+const CACHE_ROOT = resolveCacheRoot();
 const HEADERS: Record<string, string> = {
   "User-Agent": process.env.NFLVERSE_USER_AGENT || DEFAULT_USER_AGENT,
   Accept: "text/csv,application/octet-stream,application/gzip",
