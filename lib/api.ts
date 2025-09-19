@@ -1,5 +1,36 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import { assignErrorCause, getErrorCause } from "./errors";
+
+const ensureNextCacheDir = () => {
+  if (typeof process === "undefined") return;
+
+  const existing = process.env.NEXT_CACHE_DIR?.trim();
+  const fallback = path.join(os.tmpdir(), "next-cache");
+  const target = existing && existing.length > 0 ? existing : fallback;
+
+  if (!existing) {
+    process.env.NEXT_CACHE_DIR = target;
+  }
+
+  const nflverseCache = process.env.NFLVERSE_CACHE_DIR?.trim();
+  if (!nflverseCache) {
+    process.env.NFLVERSE_CACHE_DIR = path.join(target, "nflverse");
+  }
+
+  try {
+    fs.mkdirSync(target, { recursive: true });
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err?.code === "EEXIST") return;
+    // eslint-disable-next-line no-console
+    console.warn(`[api] Failed to ensure NEXT_CACHE_DIR at ${target}`, err);
+  }
+};
+
+ensureNextCacheDir();
 
 export class HttpError extends Error {
   status: number;
