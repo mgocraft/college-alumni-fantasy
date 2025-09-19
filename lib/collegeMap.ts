@@ -740,8 +740,7 @@ for (const [alias, canonical] of RAW_OVERRIDES) {
   }
 }
 
-const sanitizeCollegeValue = (value: unknown): string | null => {
-=======
+
 const sanitizeCollege = (value: unknown): string | null => {
 
   if (PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(lower))) return null;
