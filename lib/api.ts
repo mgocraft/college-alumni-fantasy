@@ -20,6 +20,7 @@ const ensureNextCacheDir = () => {
     process.env.NFLVERSE_CACHE_DIR = path.join(target, "nflverse");
   }
 
+
   try {
     fs.mkdirSync(target, { recursive: true });
   } catch (error) {
