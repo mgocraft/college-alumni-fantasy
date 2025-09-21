@@ -90,39 +90,6 @@ const norm = (value: unknown): string => (value ?? "").toString().trim();
 const nameKey = (value: string) => normalize(value ?? "");
 const nkey = (name: string, team: string) => `${name.toLowerCase().replace(/\s+/g, " ")}|${team.toUpperCase()}`;
 
-export function buildCollegeMaps(rows: PlayersMasterRow[]) {
-  const byId = new Map<string, string>();
-  const byNameTeam = new Map<string, string>();
-
-  for (const r of rows) {
-    const id = norm(r.player_id ?? r.gsis_id);
-    const name = norm(r.full_name ?? r.player_name);
-    const team = norm(r.team ?? r.recent_team);
-    const college = norm(r.college_name ?? r.college);
-
-    if (id && college) byId.set(id, college);
-    if (name && team && college) byNameTeam.set(nkey(name, team), college);
-  }
-
-  return { byId, byNameTeam };
-}
-
-export function resolveCollege(
-  stat: { player_id?: unknown; player_name?: string; team?: string },
-  maps: { byId: Map<string, string>; byNameTeam: Map<string, string> },
-): string {
-  const id = norm(stat.player_id);
-  const name = norm(stat.player_name ?? "");
-  const team = norm(stat.team ?? "");
-  return maps.byId.get(id) || maps.byNameTeam.get(nkey(name, team)) || "Unknown";
-}
-
-export type PlayersMasterLookup = {
-  byId: Map<string, PlayersMasterRow>;
-  byNameTeam: Map<string, PlayersMasterRow>;
-  byName: Map<string, PlayersMasterRow>;
-};
-
 const appendIdCandidate = (set: Set<string>, value: unknown) => {
   const id = norm(value);
   if (id) set.add(id);
@@ -161,6 +128,42 @@ const collectIds = (row: PlayersMasterRow): string[] => {
     }
   }
   return Array.from(ids);
+};
+
+export function buildCollegeMaps(rows: PlayersMasterRow[]) {
+  const byId = new Map<string, string>();
+  const byNameTeam = new Map<string, string>();
+
+  for (const r of rows) {
+    const name = norm(r.full_name ?? r.player_name);
+    const team = norm(r.team ?? r.recent_team);
+    const college = norm(r.college_name ?? r.college);
+
+    if (college) {
+      for (const id of collectIds(r)) {
+        if (id) byId.set(id, college);
+      }
+    }
+    if (name && team && college) byNameTeam.set(nkey(name, team), college);
+  }
+
+  return { byId, byNameTeam };
+}
+
+export function resolveCollege(
+  stat: { player_id?: unknown; player_name?: string; team?: string },
+  maps: { byId: Map<string, string>; byNameTeam: Map<string, string> },
+): string {
+  const id = norm(stat.player_id);
+  const name = norm(stat.player_name ?? "");
+  const team = norm(stat.team ?? "");
+  return maps.byId.get(id) || maps.byNameTeam.get(nkey(name, team)) || "Unknown";
+}
+
+export type PlayersMasterLookup = {
+  byId: Map<string, PlayersMasterRow>;
+  byNameTeam: Map<string, PlayersMasterRow>;
+  byName: Map<string, PlayersMasterRow>;
 };
 
 export function buildPlayersLookup(rows: PlayersMasterRow[]): PlayersMasterLookup {
