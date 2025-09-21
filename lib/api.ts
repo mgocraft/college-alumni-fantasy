@@ -105,6 +105,13 @@ export const respondWithError = (scope: string, error: unknown, options: ErrorRe
       if (hints.length) payload.urlHints = hints;
       return NextResponse.json(payload, { status: err.status });
     }
+    if ((err as { code?: string }).code === "PLAYERS_MASTER_FETCH_FAILED") {
+      const detail = err.detail ?? err.message;
+      const payload: Record<string, unknown> = { error: "PLAYERS_MASTER_FETCH_FAILED", details: detail };
+      if (input !== undefined) payload.input = input;
+      if (hints.length) payload.urlHints = hints;
+      return NextResponse.json(payload, { status: err.status });
+    }
     const payload: Record<string, unknown> = err.detail
       ? { error: err.message, detail: err.detail }
       : { error: err.message };

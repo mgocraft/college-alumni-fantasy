@@ -1,7 +1,7 @@
 
 'use client';
 import { useEffect, useState } from "react";
-import { fetchJson } from "@/lib/clientFetch";
+import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
 type Row = { school:string; wins:number; losses:number; ties:number; pointsFor:number; pointsAgainst:number };
 type Api = { recordsCount:number; standings: Row[] };
 export default function StandingsPage() {
@@ -24,7 +24,7 @@ export default function StandingsPage() {
         console.error("Failed to load standings", e);
         if (!cancelled) {
           setData(null);
-          setError(e instanceof Error ? e.message : String(e));
+          setError(friendlyErrorMessage(e, "Unable to load standings"));
         }
       } finally {
         if (!cancelled) setLoading(false);

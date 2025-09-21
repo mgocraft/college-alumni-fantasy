@@ -1,7 +1,7 @@
 
 'use client';
 import { useState } from "react";
-import { fetchJson } from "@/lib/clientFetch";
+import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
 type Performer = { name:string; position:string; team?:string; points:number; meta?:any };
 type MatchResp = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx';
   home:string; away:string; homePoints:number; awayPoints:number; winner:'home'|'away'|'tie'; homeLineup:Performer[]; awayLineup:Performer[] };
@@ -36,7 +36,7 @@ export default function MatchupsPage() {
     } catch (e) {
       console.error("Failed to simulate matchup", e);
       setData(null);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyErrorMessage(e, "Unable to simulate matchup"));
     } finally { setLoading(false); }
   };
 

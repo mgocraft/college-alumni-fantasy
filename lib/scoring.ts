@@ -1,6 +1,5 @@
 
 import type { Leader, SchoolAggregate } from "./types";
-import { resolveCollege } from "./collegeMap";
 import type { DefenseWeek } from "./nflverse";
 
 type Mode = 'weekly' | 'avg';
@@ -25,7 +24,14 @@ export async function aggregateByCollegeMode(
   const selectorPoints = (mode==='avg' && historicalAverages) ? historicalAverages : thisWeekPoints;
 
   // group by college
-  const groups = new Map<string, Leader[]>(); for (const l of leaders) { const c=resolveCollege(l as any); if (!groups.has(c)) groups.set(c, []); groups.get(c)!.push(l as any); }
+  const groups = new Map<string, Leader[]>();
+  for (const l of leaders) {
+    const rawCollege = l.college === null || l.college === undefined ? "" : String(l.college);
+    const trimmed = rawCollege.trim();
+    const college = trimmed.length ? trimmed : "Unknown";
+    if (!groups.has(college)) groups.set(college, []);
+    groups.get(college)!.push(l as any);
+  }
 
   const defenseData = opts.defense === 'approx' ? (opts.defenseData ?? null) : null;
   const teamDefense: Record<string, { dstPoints:number; totalSnaps:number; snapsById:Record<string,number> }> = {};

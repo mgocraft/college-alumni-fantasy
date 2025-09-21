@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { fetchJson } from "@/lib/clientFetch";
+import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
 type SeriesPoint = { week:number; totalPoints:number; performers:{name:string; position:string; team?:string; points:number; meta?:any}[] };
 type Api = { school:string; season:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; series: SeriesPoint[] };
 export default function SchoolDetail({ params }: { params: { school: string } }) {
@@ -30,7 +30,7 @@ export default function SchoolDetail({ params }: { params: { school: string } })
     } catch (e) {
       console.error(`Failed to load school detail for ${school}`, e);
       setData(null);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyErrorMessage(e, `Unable to load data for ${school}`));
     } finally {
       setLoading(false);
     }

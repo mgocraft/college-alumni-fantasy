@@ -14,7 +14,6 @@ test('scores API uses stat fallback to populate colleges', async (t) => {
   process.env.NFLVERSE_CACHE_DIR = tmpDir;
   process.env.NEXT_CACHE_DIR = tmpDir;
 
-  const { HttpError } = loadTsModule(path.resolve(__dirname, '../lib/api.ts'));
   const httpModule = loadTsModule(path.resolve(__dirname, '../lib/http.ts'));
 
   const statsCsv = [
@@ -23,6 +22,11 @@ test('scores API uses stat fallback to populate colleges', async (t) => {
     '2025,1,beta,J. Hurts,PHI,QB,200,2,1,60,1,0,0,0,0,0,0,00-0033559',
   ].join('\n');
   const statsBuffer = zlib.gzipSync(Buffer.from(statsCsv, 'utf8'));
+  const playersCsv = [
+    'player_id,gsis_id,full_name,recent_team,college_name',
+    'alpha,,Unknown Player,HOU,Rice',
+    ',00-0033559,Jalen Hurts,PHI,Oklahoma',
+  ].join('\n');
 
   const originalFetchBuffer = httpModule.fetchBuffer;
   httpModule.fetchBuffer = async (url, init) => {
@@ -30,8 +34,11 @@ test('scores API uses stat fallback to populate colleges', async (t) => {
       if (init?.method === 'HEAD') return Buffer.alloc(0);
       return statsBuffer;
     }
+    if (url.includes('players.csv')) {
+      return Buffer.from(playersCsv, 'utf8');
+    }
     if (url.includes('roster_week_2025')) {
-      throw new HttpError(404, 'Not Found');
+      throw new Error(`Roster fetch should not be attempted: ${url}`);
     }
     throw new Error(`Unexpected fetchBuffer call for ${url}`);
   };
@@ -55,7 +62,7 @@ test('scores API uses stat fallback to populate colleges', async (t) => {
   assert.equal(payload.count, payload.results.length);
 
   const schools = payload.results.map((entry) => entry.school);
-  assert.ok(new Set(schools).size > 1, 'expected multiple schools when falling back to stat-derived roster');
-  assert.ok(schools.some((school) => school !== 'Unknown'), 'expected at least one mapped college from stat-derived roster');
-  assert.ok(schools.includes('Michigan'), 'expected stat-derived roster to include Michigan mapping from alt ids');
+  assert.ok(new Set(schools).size >= 2, 'expected multiple schools from players master join');
+  assert.ok(schools.includes('Rice'), 'expected Rice mapping from players master');
+  assert.ok(schools.includes('Oklahoma'), 'expected Oklahoma mapping from players master alt id');
 });

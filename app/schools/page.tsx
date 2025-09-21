@@ -2,7 +2,7 @@
 'use client';
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { fetchJson } from "@/lib/clientFetch";
+import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
 type Row = { school:string; week:number; format:string; totalPoints:number; performers:{name:string; position:string; team?:string; points:number; meta?:any}[] };
 type Api = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; count:number; results: Row[] };
 export default function SchoolsPage() {
@@ -27,7 +27,7 @@ export default function SchoolsPage() {
         console.error("Failed to load school list", e);
         if (!cancelled) {
           setData(null);
-          setError(e instanceof Error ? e.message : String(e));
+          setError(friendlyErrorMessage(e, "Unable to load school list"));
         }
       } finally {
         if (!cancelled) setLoading(false);
