@@ -14,6 +14,7 @@ const {
 const sampleRows = [
   { player_id: 'alpha', full_name: 'Alpha Example', recent_team: 'HOU', college_name: 'Rice' },
   { gsis_id: '00-0033559', full_name: 'Jalen Hurts', team: 'PHI', college_name: 'Oklahoma' },
+  { player_id: 'delta', nfl_id: 'N-12345', full_name: 'Alt Example', recent_team: 'DAL', college_name: 'Texas' },
   { player_id: 'gamma', full_name: 'Mystery Person', recent_team: 'FA', college_name: '' },
 ];
 
@@ -30,8 +31,13 @@ test('resolveCollege falls back to name and team', () => {
   assert.equal(result, 'Oklahoma');
 });
 
+test('resolveCollege recognizes alternate identifier fields', () => {
+  const result = resolveCollege({ player_id: 'N-12345', player_name: 'Alt Example', team: 'DAL' }, collegeMaps);
+  assert.equal(result, 'Texas');
+});
+
 test('resolveCollege returns Unknown when no mapping found', () => {
-  const result = resolveCollege({ player_id: 'delta', player_name: 'Unknown', team: 'UNK' }, collegeMaps);
+  const result = resolveCollege({ player_id: 'epsilon', player_name: 'Unknown', team: 'UNK' }, collegeMaps);
   assert.equal(result, 'Unknown');
 });
 
