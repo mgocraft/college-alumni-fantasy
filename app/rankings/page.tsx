@@ -2,7 +2,7 @@
 'use client';
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { fetchJson } from "@/lib/clientFetch";
+import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
 type Row = { school:string; totalPoints:number; performers:any[] };
 type Api = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; count:number; results: Row[] };
 export default function RankingsPage() {
@@ -25,7 +25,7 @@ export default function RankingsPage() {
     } catch (e) {
       console.error("Failed to load rankings", e);
       setData(null);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyErrorMessage(e, "Unable to load rankings"));
     } finally {
       setLoading(false);
     }

@@ -61,3 +61,22 @@ export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit)
   return payload as T;
 }
 
+const extractDetailMessage = (data: unknown): string | undefined => {
+  if (!data || typeof data !== "object") return undefined;
+  const detailValue = (data as { details?: unknown }).details ?? (data as { detail?: unknown }).detail;
+  if (typeof detailValue === "string" && detailValue.trim()) return detailValue.trim();
+  return undefined;
+};
+
+export function friendlyErrorMessage(error: unknown, fallback: string): string {
+  const detail = extractDetailMessage((error as ClientFetchError)?.data);
+  if (detail) return `${fallback}: ${detail}`;
+  if (error instanceof Error) {
+    if (error.message === "PLAYERS_MASTER_FETCH_FAILED") {
+      return `${fallback}. Please try again later.`;
+    }
+    if (error.message && error.message.trim()) return error.message;
+  }
+  return `${fallback}. Please try again later.`;
+}
+

@@ -7,7 +7,15 @@ import { HttpError } from "./api";
 import { createErrorWithCause } from "./errors";
 
 import { fetchBuffer } from "./http";
-import { resolveCollege as resolveCollegeForLeader } from "./collegeMap";
+import { playerStatsUrl } from "./nflverseUrls";
+import {
+  loadPlayersMaster,
+  buildCollegeMaps,
+  resolveCollege as resolveCollegeFromMaster,
+  buildPlayersLookup,
+  resolvePlayerRow,
+  type PlayersMasterLookup,
+} from "./playersMaster";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
 
@@ -42,12 +50,6 @@ const HEADERS: Record<string, string> = {
   "User-Agent": process.env.NFLVERSE_USER_AGENT || DEFAULT_USER_AGENT,
   Accept: "text/csv,application/octet-stream,application/gzip",
 };
-
-export const urlPlayerStats = (season: number) =>
-  `${RELEASE_BASE}/stats_player/stats_player_week_${season}.csv.gz`;
-
-export const urlWeeklyRosters = (season: number) =>
-  `${RELEASE_BASE}/weekly_rosters/roster_week_${season}.csv.gz`;
 
 const toPositiveInt = (value: string | undefined, fallback: number): number => {
   const num = Number(value);
@@ -162,31 +164,6 @@ const parseCsvSafe = (csv: string, context: string): CsvRow[] => {
   }
 };
 
-type MapCollections = {
-  byId: Map<string, NflversePlayer>;
-  byGsis: Map<string, NflversePlayer>;
-  byNameTeam: Map<string, NflversePlayer>;
-  byName: Map<string, NflversePlayer>;
-};
-
-type RosterLookup = {
-  byWeek: Map<number, MapCollections>;
-  season: MapCollections;
-};
-
-export interface NflversePlayer {
-  season: number;
-  week: number;
-  player_id: string;
-  gsis_id?: string;
-  nfl_id?: string;
-  full_name: string;
-  position?: string;
-  team?: string;
-  college?: string | null;
-  college_name?: string | null;
-}
-
 export interface NflversePlayerStat {
   season: number;
   week: number;
@@ -251,14 +228,35 @@ export interface LoadWeekResult {
   defenseData?: DefenseWeek;
 }
 
-const playersCache = new Map<number, NflversePlayer[]>();
-const rosterLookupCache = new Map<number, RosterLookup>();
 const playerStatsSeasonCache = new Map<number, Map<number, NflversePlayerStat[]>>();
 const snapSeasonCache = new Map<number, Map<number, DefSnapRow[]>>();
 const teamDefenseSeasonCache = new Map<number, Map<number, TeamDefenseInput[]>>();
-const fallbackNameTeamWarnings = new Set<string>();
 const playerColumnWarnings = new Set<number>();
-const rosterFallbackWarnings = new Set<number>();
+
+type CollegeMaps = ReturnType<typeof buildCollegeMaps>;
+
+type PlayersMasterData = {
+  maps: CollegeMaps;
+  lookup: PlayersMasterLookup;
+};
+
+let playersMasterDataPromise: Promise<PlayersMasterData> | null = null;
+
+const ensurePlayersMasterData = async (): Promise<PlayersMasterData> => {
+  if (!playersMasterDataPromise) {
+    playersMasterDataPromise = (async () => {
+      const rows = await loadPlayersMaster();
+      const maps = buildCollegeMaps(rows);
+      const lookup = buildPlayersLookup(rows);
+      return { maps, lookup };
+    })();
+    playersMasterDataPromise = playersMasterDataPromise.catch((error) => {
+      playersMasterDataPromise = null;
+      throw error;
+    });
+  }
+  return playersMasterDataPromise;
+};
 
 const getCachePath = (releaseTag: string, filename: string) => path.join(CACHE_ROOT, releaseTag, filename);
 
@@ -436,78 +434,6 @@ const unique = (items: string[]): string[] => {
   return out;
 };
 
-const collect = () => ({
-  byId: new Map<string, NflversePlayer>(),
-  byGsis: new Map<string, NflversePlayer>(),
-  byNameTeam: new Map<string, NflversePlayer>(),
-  byName: new Map<string, NflversePlayer>(),
-});
-
-const addToCollection = (col: MapCollections, player: NflversePlayer) => {
-  const id = toString(player.player_id);
-  if (id && !col.byId.has(id)) col.byId.set(id, player);
-  const gsis = toString(player.gsis_id);
-  if (gsis && !col.byGsis.has(gsis)) col.byGsis.set(gsis, player);
-  const name = normalize(player.full_name ?? "");
-  if (name) {
-    const team = (player.team ?? "").toUpperCase();
-    const nameTeam = `${name}|${team}`;
-    if (!col.byNameTeam.has(nameTeam)) col.byNameTeam.set(nameTeam, player);
-    if (!col.byName.has(name)) col.byName.set(name, player);
-  }
-};
-
-const buildRosterLookup = (players: NflversePlayer[]): RosterLookup => {
-  const byWeek = new Map<number, MapCollections>();
-  const season = collect();
-  for (const player of players) {
-    addToCollection(season, player);
-    const week = Number(player.week ?? 0);
-    if (!byWeek.has(week)) byWeek.set(week, collect());
-    addToCollection(byWeek.get(week)!, player);
-  }
-  return { byWeek, season };
-};
-
-const buildLookupFromStats = (season: number, stats: NflversePlayerStat[]): RosterLookup => {
-  const players: NflversePlayer[] = stats.map((stat) => {
-    const leaderTemplate: Leader = {
-      player_id: stat.player_id,
-      full_name: stat.name || "",
-      position: stat.position || "",
-      team: stat.team || undefined,
-      points: 0,
-    };
-    const idCandidates = unique([stat.player_id, ...(stat.alt_ids ?? [])]);
-    let derivedCollege = "Unknown";
-    for (const candidate of idCandidates) {
-      if (!candidate) continue;
-      const resolved = resolveCollegeForLeader({
-        ...leaderTemplate,
-        player_id: candidate,
-      } as Leader);
-      if (resolved && resolved !== "Unknown") {
-        derivedCollege = resolved;
-        break;
-      }
-    }
-    if (!derivedCollege || derivedCollege === "Unknown") {
-      derivedCollege = resolveCollegeForLeader(leaderTemplate);
-    }
-    return {
-      season,
-      week: Number(stat.week ?? 0) || 0,
-      player_id: String(stat.player_id),
-      full_name: stat.name || "",
-      position: stat.position || undefined,
-      team: stat.team || undefined,
-      college: derivedCollege,
-      college_name: derivedCollege,
-    };
-  });
-  return buildRosterLookup(players);
-};
-
 const resolvePlayerId = (values: string[], fallback: string): string => {
   const [first] = unique(values.filter(v => v && v.trim().length));
   if (first && first.trim().length) return first.trim();
@@ -544,11 +470,6 @@ const resolveTeam = (row: CsvRow): string => {
 
 const resolvePosition = (row: CsvRow): string => toString(row.position || row.pos || row.depth_chart_position);
 
-const resolveCollege = (row: CsvRow): string => {
-  const college = toString(row.college_name || row.college || row.school);
-  return college || "";
-};
-
 const parseFumbles = (row: CsvRow): number => {
   const direct = toNumber(row.fumbles_lost ?? row.fumbles_lost_total ?? row.fumbles_lost_offense);
   if (direct > 0) return direct;
@@ -562,64 +483,6 @@ const parseFumbles = (row: CsvRow): number => {
   ];
   const sum = parts.reduce((acc, val) => acc + val, 0);
   return sum;
-};
-
-const getRosterLookup = async (season: number): Promise<RosterLookup> => {
-  if (rosterLookupCache.has(season)) return rosterLookupCache.get(season)!;
-  const players = await fetchPlayers(season);
-  const lookup = buildRosterLookup(players);
-  rosterLookupCache.set(season, lookup);
-  return lookup;
-};
-
-const matchPlayer = (
-  lookup: RosterLookup | null,
-  stat: { week: number; player_id: string; alt_ids: string[]; name: string; team: string },
-): NflversePlayer | undefined => {
-  if (!lookup) return undefined;
-  const weekLookup = lookup.byWeek.get(Number(stat.week));
-  const candidates = unique([stat.player_id, ...stat.alt_ids]);
-  for (const id of candidates) {
-    if (weekLookup?.byId.has(id)) return weekLookup.byId.get(id);
-  }
-  for (const id of candidates) {
-    if (lookup.season.byId.has(id)) return lookup.season.byId.get(id);
-  }
-  for (const id of candidates) {
-    if (weekLookup?.byGsis.has(id)) return weekLookup.byGsis.get(id);
-  }
-  for (const id of candidates) {
-    if (lookup.season.byGsis.has(id)) return lookup.season.byGsis.get(id);
-  }
-  const name = normalize(stat.name ?? "");
-  if (name) {
-    const teamKey = `${name}|${(stat.team ?? "").toUpperCase()}`;
-    const warnFallback = (scope: "week" | "season") => {
-      const warnKey = `${scope}|${stat.week}|${teamKey}`;
-      if (!fallbackNameTeamWarnings.has(warnKey)) {
-        fallbackNameTeamWarnings.add(warnKey);
-        // eslint-disable-next-line no-console
-        console.warn("[nflverse] Fallback roster match by name/team", {
-          scope,
-          week: stat.week,
-          name: stat.name,
-          team: stat.team,
-          player_id: stat.player_id,
-        });
-      }
-    };
-    if (weekLookup?.byNameTeam.has(teamKey)) {
-      warnFallback("week");
-      return weekLookup.byNameTeam.get(teamKey);
-    }
-    if (lookup.season.byNameTeam.has(teamKey)) {
-      warnFallback("season");
-      return lookup.season.byNameTeam.get(teamKey);
-    }
-    if (weekLookup?.byName.has(name)) return weekLookup.byName.get(name);
-    if (lookup.season.byName.has(name)) return lookup.season.byName.get(name);
-  }
-  return undefined;
 };
 
 const parsePlayerStatRow = (row: CsvRow, fallbackSeason: number): NflversePlayerStat | null => {
@@ -651,31 +514,6 @@ const parsePlayerStatRow = (row: CsvRow, fallbackSeason: number): NflversePlayer
     fumbles_lost: parseFumbles(row),
     field_goals_made: toNumber(row.field_goals_made ?? row.fg_made ?? row.fg),
     extra_points_made: toNumber(row.extra_points_made ?? row.xp_made ?? row.xpt),
-  };
-};
-
-const parseRosterRow = (row: CsvRow, fallbackSeason: number): NflversePlayer | null => {
-  const season = toInt(row.season) || fallbackSeason;
-  const week = toInt(row.week ?? row.game_week ?? row.week_num ?? row.week_number);
-  const name = resolveName(row);
-  if (!name) return null;
-  const team = resolveTeam(row);
-  const candidates = resolveIdCandidates(row);
-  const fallbackId = `${normalize(name)}|${team}`;
-  const playerId = resolvePlayerId(candidates, fallbackId);
-  const gsis = toString(row.gsis_id || row.gsis_it_id);
-  const college = resolveCollege(row) || null;
-  return {
-    season,
-    week,
-    player_id: playerId,
-    gsis_id: gsis || undefined,
-    nfl_id: toString(row.nfl_id) || undefined,
-    full_name: name,
-    position: resolvePosition(row) || undefined,
-    team: team || undefined,
-    college,
-    college_name: college,
   };
 };
 
@@ -733,33 +571,13 @@ const parseTeamDefenseRow = (row: CsvRow, fallbackSeason: number): TeamDefenseIn
   };
 };
 
-export async function fetchPlayers(season: number): Promise<NflversePlayer[]> {
-  if (playersCache.has(season)) return playersCache.get(season)!;
-
-
-  const rows = await fetchCsvAsset({
-    releaseTag: "weekly_rosters",
-    filename: `roster_week_${season}.csv.gz`,
-    url: urlWeeklyRosters(season),
-    season,
-    gz: true,
-  });
-
-  const parsed = rows
-    .map((row) => parseRosterRow(row, season))
-    .filter((p): p is NflversePlayer => Boolean(p) && (p as NflversePlayer).season === season);
-  playersCache.set(season, parsed);
-  rosterLookupCache.delete(season);
-  return parsed;
-}
-
 const loadSeasonPlayerStats = async (season: number): Promise<Map<number, NflversePlayerStat[]>> => {
   if (playerStatsSeasonCache.has(season)) return playerStatsSeasonCache.get(season)!;
 
   const rows = await fetchCsvAsset({
     releaseTag: "stats_player",
     filename: `stats_player_week_${season}.csv.gz`,
-    url: urlPlayerStats(season),
+    url: playerStatsUrl(season),
     season,
     gz: true,
   });
@@ -898,34 +716,53 @@ const ensureDefenseLeaders = (
   leaders: Leader[],
   leaderMap: Map<string, Leader>,
   snaps: DefSnapRow[],
-  lookup: RosterLookup | null,
+  playersData: PlayersMasterData,
 ) => {
   for (const snap of snaps) {
     const id = snap.player_id;
     if (!id) continue;
-    if (!leaderMap.has(id)) {
-      const match = matchPlayer(lookup, { week: snap.week, player_id: snap.player_id, alt_ids: snap.alt_ids, name: snap.name, team: snap.team });
-      const position = (match?.position || "DEF").toUpperCase();
-      const rawTeam = match?.team || snap.team;
-      const team = rawTeam ? rawTeam.toUpperCase() : undefined;
-      const college = match?.college ?? match?.college_name ?? null;
+    const key = String(id);
+    const playerRow = resolvePlayerRow(
+      { player_id: snap.player_id, alt_ids: snap.alt_ids, player_name: snap.name, team: snap.team },
+      playersData.lookup,
+    );
+    const rawTeam = (snap.team || (playerRow?.team as string) || (playerRow?.recent_team as string) || "").toString().trim();
+    const team = rawTeam ? rawTeam.toUpperCase() : undefined;
+    const resolvedName =
+      (typeof playerRow?.full_name === "string" && playerRow.full_name.trim()) ? playerRow.full_name :
+      (typeof playerRow?.player_name === "string" && playerRow.player_name.trim()) ? playerRow.player_name :
+      snap.name || "Unknown";
+    const positionSource =
+      (typeof playerRow?.position === "string" && playerRow.position.trim()) ? playerRow.position :
+      (typeof (playerRow as { depth_chart_position?: unknown })?.depth_chart_position === "string"
+        && (playerRow as { depth_chart_position?: string }).depth_chart_position!.trim())
+        ? (playerRow as { depth_chart_position?: string }).depth_chart_position!
+        : (typeof (playerRow as { gsis_position?: unknown })?.gsis_position === "string"
+        && (playerRow as { gsis_position?: string }).gsis_position!.trim())
+        ? (playerRow as { gsis_position?: string }).gsis_position!
+        : "";
+    const position = (positionSource || "DEF").toUpperCase();
+    const resolvedCollege = resolveCollegeFromMaster(
+      { player_id: playerRow?.player_id ?? snap.player_id, player_name: resolvedName, team },
+      playersData.maps,
+    );
+    if (!leaderMap.has(key)) {
       const leader: Leader = {
         player_id: id,
-        full_name: match?.full_name || snap.name || "Unknown",
+        full_name: resolvedName,
         position,
         team,
         points: 0,
-        college,
+        college: resolvedCollege,
       };
       leaders.push(leader);
-      leaderMap.set(id, leader);
+      leaderMap.set(key, leader);
     } else {
-      const existing = leaderMap.get(id)!;
-      if (!existing.team && snap.team) existing.team = snap.team.toUpperCase();
-      if (!existing.position || existing.position === "") {
-        const match = matchPlayer(lookup, { week: snap.week, player_id: snap.player_id, alt_ids: snap.alt_ids, name: snap.name, team: snap.team });
-        if (match?.position) existing.position = match.position.toUpperCase();
-        if (!existing.college && (match?.college || match?.college_name)) existing.college = match.college ?? match.college_name ?? null;
+      const existing = leaderMap.get(key)!;
+      if (!existing.team && team) existing.team = team;
+      if ((!existing.position || existing.position === "") && position) existing.position = position;
+      if ((!existing.college || existing.college === "Unknown") && resolvedCollege !== "Unknown") {
+        existing.college = resolvedCollege;
       }
     }
   }
@@ -936,36 +773,52 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
   const week = options.week;
   const format = options.format;
   const includeDefense = options.includeDefense ?? false;
-  const stats = await fetchWeeklyPlayerStats(season, week);
-  let lookup: RosterLookup | null = null;
+  let playersData: PlayersMasterData;
   try {
-    lookup = await getRosterLookup(season);
+    playersData = await ensurePlayersMasterData();
   } catch (error) {
-    if (error instanceof NflverseAssetMissingError) {
-      if (!rosterFallbackWarnings.has(season)) {
-        rosterFallbackWarnings.add(season);
-        // eslint-disable-next-line no-console
-        console.warn("[nflverse] Weekly roster missing; using stat-derived fallback", {
-          season,
-        });
-      }
-      lookup = buildLookupFromStats(season, stats);
-    } else {
-      throw error;
-    }
+    const err = error instanceof Error ? error : new Error(String(error));
+    throw new HttpError(500, "PLAYERS_MASTER_FETCH_FAILED", {
+      detail: err.message,
+      cause: err,
+      code: "PLAYERS_MASTER_FETCH_FAILED",
+    });
   }
+  const stats = await fetchWeeklyPlayerStats(season, week);
   const leaders: Leader[] = [];
   const leaderMap = new Map<string, Leader>();
   for (const stat of stats) {
-    const match = matchPlayer(lookup, stat);
-    const rawTeam = match?.team || stat.team || undefined;
-    const team = rawTeam ? rawTeam.toUpperCase() : undefined;
-    const position = (match?.position || stat.position || "").toUpperCase();
-    const college = match?.college ?? match?.college_name ?? null;
+    const playerRow = resolvePlayerRow(stat, playersData.lookup);
+    const name =
+      (typeof playerRow?.full_name === "string" && playerRow.full_name.trim()) ? playerRow.full_name :
+      (stat.name && stat.name.trim()) ? stat.name :
+      (typeof playerRow?.player_name === "string" && playerRow.player_name.trim()) ? playerRow.player_name :
+      "Unknown";
+    const teamRaw =
+      (stat.team && stat.team.trim()) ? stat.team :
+      (typeof playerRow?.team === "string" && playerRow.team.trim()) ? playerRow.team :
+      (typeof playerRow?.recent_team === "string" && playerRow.recent_team.trim()) ? playerRow.recent_team :
+      "";
+    const team = teamRaw ? teamRaw.toUpperCase() : undefined;
+    const positionSource =
+      (stat.position && stat.position.trim()) ? stat.position :
+      (typeof playerRow?.position === "string" && playerRow.position.trim()) ? playerRow.position :
+      (typeof (playerRow as { depth_chart_position?: unknown })?.depth_chart_position === "string"
+        && (playerRow as { depth_chart_position?: string }).depth_chart_position!.trim())
+        ? (playerRow as { depth_chart_position?: string }).depth_chart_position!
+        : (typeof (playerRow as { gsis_position?: unknown })?.gsis_position === "string"
+        && (playerRow as { gsis_position?: string }).gsis_position!.trim())
+        ? (playerRow as { gsis_position?: string }).gsis_position!
+        : "";
+    const position = (positionSource || "").toUpperCase();
+    const college = resolveCollegeFromMaster(
+      { player_id: playerRow?.player_id ?? stat.player_id, player_name: playerRow?.full_name ?? name, team },
+      playersData.maps,
+    );
     const points = computeFantasyPoints(stat, format);
     const leader: Leader = {
       player_id: stat.player_id,
-      full_name: match?.full_name || stat.name || "Unknown",
+      full_name: name,
       position,
       team,
       points,
@@ -980,7 +833,7 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
       fetchDefensiveSnaps(season, week),
       fetchTeamDefenseInputs(season, week),
     ]);
-    ensureDefenseLeaders(leaders, leaderMap, snaps, lookup);
+    ensureDefenseLeaders(leaders, leaderMap, snaps, playersData);
     defenseData = buildDefenseWeek(snaps, defenseInputs);
   }
   return { leaders, defenseData };
