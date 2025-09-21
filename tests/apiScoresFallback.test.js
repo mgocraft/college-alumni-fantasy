@@ -17,9 +17,9 @@ test('scores API uses stat fallback to populate colleges', async (t) => {
   const httpModule = loadTsModule(path.resolve(__dirname, '../lib/http.ts'));
 
   const statsCsv = [
-    'season,week,player_id,player,team,position,passing_yards,passing_tds,interceptions,rushing_yards,rushing_tds,receptions,receiving_yards,receiving_tds,fumbles_lost,field_goals_made,extra_points_made,gsis_id',
-    '2025,1,alpha,Unknown Player,HOU,WR,0,0,0,0,0,7,110,1,0,0,0,12',
-    '2025,1,beta,J. Hurts,PHI,QB,200,2,1,60,1,0,0,0,0,0,0,00-0033559',
+    'season,week,player_gsis_id,player_display_name,recent_team,position,passing_yards,passing_tds,interceptions,rushing_yards,rushing_tds,receptions,receiving_yards,receiving_tds,fumbles_lost,field_goals_made,extra_points_made',
+    '2025,1,alpha,Unknown Player,HOU,WR,0,0,0,0,0,7,110,1,0,0,0',
+    '2025,1,00-0033559,J. Hurts,PHI,QB,200,2,1,60,1,0,0,0,0,0,0',
   ].join('\n');
   const statsBuffer = zlib.gzipSync(Buffer.from(statsCsv, 'utf8'));
   const playersCsv = [

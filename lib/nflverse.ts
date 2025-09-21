@@ -375,6 +375,7 @@ const PLAYER_COLUMN_GROUPS: { field: string; aliases: string[] }[] = [
     field: "player_id",
     aliases: [
       "player_id",
+      "player_gsis_id",
       "gsis_id",
       "gsis_it_id",
       "gsis_player_id",
@@ -384,7 +385,7 @@ const PLAYER_COLUMN_GROUPS: { field: string; aliases: string[] }[] = [
       "esb_id",
     ],
   },
-  { field: "player_name", aliases: ["full_name", "player", "player_name"] },
+  { field: "player_name", aliases: ["full_name", "player", "player_name", "player_display_name"] },
   { field: "team", aliases: ["team", "posteam", "team_abbr", "club_code", "team_code", "recent_team"] },
   { field: "position", aliases: ["position", "pos", "depth_chart_position"] },
   { field: "week", aliases: ["week", "game_week", "week_num", "week_number"] },
@@ -442,6 +443,7 @@ const resolvePlayerId = (values: string[], fallback: string): string => {
 
 const resolveIdCandidates = (row: CsvRow): string[] => unique([
   toString(row.player_id),
+  toString(row.player_gsis_id),
   toString(row.gsis_id),
   toString(row.gsis_it_id),
   toString(row.gsis_player_id),
@@ -454,6 +456,8 @@ const resolveIdCandidates = (row: CsvRow): string[] => unique([
 const resolveName = (row: CsvRow): string => {
   const full = toString(row.full_name);
   if (full) return full;
+  const display = toString(row.player_display_name);
+  if (display) return display;
   const player = toString(row.player);
   if (player) return player;
   const playerName = toString(row.player_name);
