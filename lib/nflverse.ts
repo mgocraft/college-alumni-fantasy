@@ -370,7 +370,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
     console.warn("NFLVERSE_STALE_FALLBACK", context);
   };
 
-  const useStaleCache = (reason: string, error?: unknown): boolean => {
+  const applyStaleCache = (reason: string, error?: unknown): boolean => {
     if (!cachedBuffer) return false;
     raw = cachedBuffer;
     usedCached = true;
@@ -389,7 +389,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
       );
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) {
-        if (useStaleCache("head-404")) {
+        if (applyStaleCache("head-404")) {
           shouldFetch = false;
         } else {
           // eslint-disable-next-line no-console
@@ -414,10 +414,10 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
       );
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) {
-        if (!useStaleCache("get-404", error)) {
+        if (!applyStaleCache("get-404", error)) {
           throw new NflverseAssetMissingError({ url, releaseTag, season, week });
         }
-      } else if (useStaleCache("get-error", error)) {
+      } else if (applyStaleCache("get-error", error)) {
         // cached fallback already applied
       } else if (error instanceof HttpError) {
         throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
@@ -428,7 +428,7 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
     }
   }
 
-  if (!raw && !useStaleCache("no-data")) {
+  if (!raw && !applyStaleCache("no-data")) {
     throw new NflverseAssetMissingError({ url, releaseTag, season, week });
   }
 
