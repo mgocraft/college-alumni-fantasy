@@ -302,12 +302,16 @@ const ensurePlayersMasterData = async (): Promise<PlayersMasterData> => {
 
 const getCachePath = (releaseTag: string, filename: string) => path.join(CACHE_ROOT, releaseTag, filename);
 
-const readCachedBuffer = async (releaseTag: string, filename: string): Promise<Buffer | null> => {
+type CachedBuffer = { buffer: Buffer; stale: boolean; ageMs: number };
+
+const readCachedBuffer = async (releaseTag: string, filename: string): Promise<CachedBuffer | null> => {
   const file = getCachePath(releaseTag, filename);
   try {
     const stat = await fs.stat(file);
-    if (CACHE_MS > 0 && Date.now() - stat.mtimeMs > CACHE_MS) return null;
-    return await fs.readFile(file);
+    const ageMs = Date.now() - stat.mtimeMs;
+    const stale = CACHE_MS > 0 && ageMs > CACHE_MS;
+    const buffer = await fs.readFile(file);
+    return { buffer, stale, ageMs };
   } catch {
     return null;
   }
@@ -333,30 +337,75 @@ const HEAD_RETRIES = Math.min(1, NFLVERSE_FETCH_RETRIES);
 
 async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
   const { releaseTag, filename, url, season, week, gz = false, requireHead = true } = options;
-  let raw = await readCachedBuffer(releaseTag, filename);
-  if (!raw) {
-    if (requireHead) {
-      try {
-        await fetchBuffer(
-          url,
-          { method: "HEAD", headers: HEADERS, cache: "no-store" },
-          { timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS, retries: HEAD_RETRIES },
-        );
-      } catch (error) {
-        if (error instanceof HttpError && error.status === 404) {
+  const cached = await readCachedBuffer(releaseTag, filename);
+  const cachedBuffer = cached?.buffer;
+  const cachedIsStale = cached?.stale ?? false;
+  let raw: Buffer | undefined;
+  let usedCached = false;
+
+  if (cachedBuffer && !cachedIsStale) {
+    raw = cachedBuffer;
+    usedCached = true;
+  }
+
+  const logFallback = (reason: string, error?: unknown) => {
+    const context: Record<string, unknown> = {
+      releaseTag,
+      filename,
+      url,
+      season,
+      week,
+      reason,
+    };
+    if (cached) {
+      context.stale = cached.stale;
+      context.cachedAgeMs = cached.ageMs;
+    }
+    if (error instanceof Error) {
+      context.error = error.message;
+    } else if (error) {
+      context.error = String(error);
+    }
+    // eslint-disable-next-line no-console
+    console.warn("NFLVERSE_STALE_FALLBACK", context);
+  };
+
+  const useStaleCache = (reason: string, error?: unknown): boolean => {
+    if (!cachedBuffer) return false;
+    raw = cachedBuffer;
+    usedCached = true;
+    logFallback(reason, error);
+    return true;
+  };
+
+  let shouldFetch = !raw;
+
+  if (shouldFetch && requireHead) {
+    try {
+      await fetchBuffer(
+        url,
+        { method: "HEAD", headers: HEADERS, cache: "no-store" },
+        { timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS, retries: HEAD_RETRIES },
+      );
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 404) {
+        if (useStaleCache("head-404")) {
+          shouldFetch = false;
+        } else {
           // eslint-disable-next-line no-console
           console.warn("NFLVERSE_MISS", { releaseTag, url, season, week });
           throw new NflverseAssetMissingError({ url, releaseTag, season, week });
         }
-        if (error instanceof HttpError) {
-          throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
-        }
+      } else if (error instanceof HttpError) {
+        throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
+      } else {
         const err = error instanceof Error ? error : new Error(String(error));
-
         throw createErrorWithCause(`[nflverse] HEAD ${url} failed: ${err.message}`, err);
-
       }
     }
+  }
+
+  if (shouldFetch && !raw) {
     try {
       raw = await fetchBuffer(
         url,
@@ -364,16 +413,29 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
         { timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS, retries: NFLVERSE_FETCH_RETRIES },
       );
     } catch (error) {
-      if (error instanceof HttpError) {
+      if (error instanceof HttpError && error.status === 404) {
+        if (!useStaleCache("get-404", error)) {
+          throw new NflverseAssetMissingError({ url, releaseTag, season, week });
+        }
+      } else if (useStaleCache("get-error", error)) {
+        // cached fallback already applied
+      } else if (error instanceof HttpError) {
         throw new HttpError(error.status, `[nflverse] ${error.message}`, { cause: error });
+      } else {
+        const err = error instanceof Error ? error : new Error(String(error));
+        throw createErrorWithCause(`[nflverse] Failed to fetch ${url}: ${err.message}`, err);
       }
-      const err = error instanceof Error ? error : new Error(String(error));
-
-      throw createErrorWithCause(`[nflverse] Failed to fetch ${url}: ${err.message}`, err);
     }
-    await writeCachedBuffer(releaseTag, filename, raw);
   }
-  const source = raw;
+
+  if (!raw && !useStaleCache("no-data")) {
+    throw new NflverseAssetMissingError({ url, releaseTag, season, week });
+  }
+
+  const source = raw!;
+  if (!usedCached) {
+    await writeCachedBuffer(releaseTag, filename, source);
+  }
   let text: string;
   if (gz) {
     try {
