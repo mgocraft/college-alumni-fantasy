@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
-type Row = { school:string; totalPoints:number; performers:any[] };
+type Performer = { name:string; position:string; team?:string; points:number; college?:string|null; meta?:any };
+type Row = { school:string; totalPoints:number; performers:Performer[] };
 type Api = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; count:number; results: Row[] };
 export default function RankingsPage() {
   const [season,setSeason]=useState("2025"), [week,setWeek]=useState("1"), [format,setFormat]=useState("ppr");
@@ -44,10 +45,10 @@ export default function RankingsPage() {
     {loading && <div>Loading…</div>}{error && <div style={{color:'salmon'}}><b>Error:</b> {error}</div>}
     <div style={{ overflowX:'auto', marginTop:12 }}><table style={{ width:'100%', borderCollapse:'collapse' }}>
       <thead><tr><th style={{textAlign:'left'}}>Rank</th><th style={{textAlign:'left'}}>School</th><th style={{textAlign:'right'}}>Points</th><th style={{textAlign:'left'}}>Top Performers</th></tr></thead>
-      <tbody>{data?.results?.map((row:any, idx:number)=>(<tr key={row.school} style={{ borderTop:'1px solid #1e293b' }}>
+      <tbody>{data?.results?.map((row, idx)=>(<tr key={row.school} style={{ borderTop:'1px solid #1e293b' }}>
         <td>#{idx+1}</td><td><Link href={`/schools/${encodeURIComponent(row.school)}`}>{row.school}</Link></td>
         <td style={{ textAlign:'right' }}>{row.totalPoints.toFixed(1)}</td>
-        <td><ul>{row.performers.slice(0,3).map((p:any,i:number)=>(<li key={i}>{p.name} ({p.position}{p.team?`/${p.team}`:''}) — {p.points}</li>))}</ul></td>
+        <td><ul>{row.performers.slice(0,3).map((p,i)=>(<li key={i}>{p.name} ({p.position}{p.team?`/${p.team}`:''}){p.college?` — ${p.college}`:''} — {p.points}</li>))}</ul></td>
       </tr>))}</tbody></table></div>
   </div>);
 }

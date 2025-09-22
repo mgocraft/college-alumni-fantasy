@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
-type Row = { school:string; week:number; format:string; totalPoints:number; performers:{name:string; position:string; team?:string; points:number; meta?:any}[] };
+type Performer = { name:string; position:string; team?:string; points:number; college?:string|null; meta?:any };
+type Row = { school:string; week:number; format:string; totalPoints:number; performers:Performer[] };
 type Api = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; count:number; results: Row[] };
 export default function SchoolsPage() {
   const [data,setData] = useState<Api|null>(null), [loading,setLoading]=useState(true), [error,setError]=useState<string|null>(null);
@@ -43,7 +44,7 @@ export default function SchoolsPage() {
       {data?.results.map(row => (<div key={row.school} className="card">
         <h3 style={{marginTop:0}}><Link href={`/schools/${encodeURIComponent(row.school)}`}>{row.school}</Link></h3>
         <div className="badge">{row.totalPoints.toFixed(1)} pts</div>
-        <ul>{row.performers.slice(0,5).map((p,idx)=>(<li key={idx}>{p.name} ({p.position}{p.team?`/${p.team}`:''}) — {p.points}</li>))}</ul>
+        <ul>{row.performers.slice(0,5).map((p,idx)=>(<li key={idx}>{p.name} ({p.position}{p.team?`/${p.team}`:''}){p.college?` — ${p.college}`:''} — {p.points}</li>))}</ul>
       </div>))}
     </div>
   </div>);

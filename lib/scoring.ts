@@ -58,7 +58,14 @@ export async function aggregateByCollegeMode(
 
     results.push({
       school, week, format, totalPoints: Number(total.toFixed(2)),
-      performers: chosen.map(p => ({ name: (p as any).full_name, position: (p as any).position, team: (p as any).team, points: thisWeekPoints[String((p as any).player_id)] ?? (p as any).points, meta: (p as any).meta }))
+      performers: chosen.map(p => ({
+        name: (p as any).full_name,
+        position: (p as any).position,
+        team: (p as any).team,
+        points: thisWeekPoints[String((p as any).player_id)] ?? (p as any).points,
+        college: (p as Leader).college,
+        meta: (p as any).meta
+      }))
     });
   }
   results.sort((a,b)=>b.totalPoints - a.totalPoints); return results;
