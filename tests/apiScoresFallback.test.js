@@ -65,4 +65,20 @@ test('scores API uses stat fallback to populate colleges', async (t) => {
   assert.ok(new Set(schools).size >= 2, 'expected multiple schools from players master join');
   assert.ok(schools.includes('Rice'), 'expected Rice mapping from players master');
   assert.ok(schools.includes('Oklahoma'), 'expected Oklahoma mapping from players master alt id');
+
+  for (const entry of payload.results) {
+    for (const performer of entry.performers) {
+      assert.ok(Object.prototype.hasOwnProperty.call(performer, 'college'), 'performer payload should include college field');
+    }
+  }
+
+  const rice = payload.results.find((entry) => entry.school === 'Rice');
+  assert.ok(rice, 'expected Rice entry in results');
+  assert.ok(rice.performers.some((performer) => performer.college === 'Rice'), 'expected Rice performers to include college data');
+
+  const oklahoma = payload.results.find((entry) => entry.school === 'Oklahoma');
+  assert.ok(oklahoma, 'expected Oklahoma entry in results');
+  const qb = oklahoma.performers.find((performer) => (performer.position || '').toUpperCase() === 'QB');
+  assert.ok(qb, 'expected quarterback performer for Oklahoma');
+  assert.equal(qb.college, 'Oklahoma');
 });

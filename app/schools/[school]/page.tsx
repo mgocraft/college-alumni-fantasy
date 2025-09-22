@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
-type SeriesPoint = { week:number; totalPoints:number; performers:{name:string; position:string; team?:string; points:number; meta?:any}[] };
+type Performer = { name:string; position:string; team?:string; points:number; college?:string|null; meta?:any };
+type SeriesPoint = { week:number; totalPoints:number; performers:Performer[] };
 type Api = { school:string; season:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; series: SeriesPoint[] };
 export default function SchoolDetail({ params }: { params: { school: string } }) {
   const { school } = params; const sp = useSearchParams(); const router = useRouter();
@@ -39,14 +40,14 @@ export default function SchoolDetail({ params }: { params: { school: string } })
   useEffect(()=>{ void refresh(); }, [school]);
   const chartData = (data?.series??[]).map(p=>({ week: p.week, points: p.totalPoints }));
 
-  const renderPerformer = (p: any) => {
+  const renderPerformer = (p: Performer) => {
     if ((p.position||'').toUpperCase()==='DEF' && p.meta?.contributors) {
       const tip = p.meta.contributors.map((c:any)=>`${c.label}: ${c.points.toFixed?c.points.toFixed(1):c.points}`).join('\n');
       return (<details style={{cursor:'pointer'}} title={tip}><summary>Defense — {p.points?.toFixed ? p.points.toFixed(1) : p.points} pts</summary>
         <ul>{p.meta.contributors.map((c:any,idx:number)=>(<li key={idx}>{c.label} — {c.points.toFixed?c.points.toFixed(2):c.points}</li>))}</ul>
       </details>);
     }
-    return (<span>{p.name} ({p.position}{p.team?`/${p.team}`:''}) — {p.points}</span>);
+    return (<span>{p.name} ({p.position}{p.team?`/${p.team}`:''}){p.college?` — ${p.college}`:''} — {p.points}</span>);
   };
 
   if (loading) return <div className="card"><h2>Loading {school}…</h2></div>;
