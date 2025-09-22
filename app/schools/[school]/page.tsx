@@ -9,9 +9,10 @@ type SeriesPoint = { week:number; totalPoints:number; performers:Performer[] };
 type Api = { school:string; season:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; series: SeriesPoint[] };
 export default function SchoolDetail({ params }: { params: { school: string } }) {
   const { school } = params; const sp = useSearchParams(); const router = useRouter();
+  const initialDefenseParam = (sp.get("defense") as 'none'|'approx'|null);
   const [format,setFormat]=useState(sp.get("format")??"ppr"); const [season,setSeason]=useState(sp.get("season")??"2025");
   const [mode,setMode]=useState<"weekly"|"avg">((sp.get("mode") as any)??"weekly"); const [includeK,setIncludeK]=useState(true);
-  const [defense,setDefense]=useState<'none'|'approx'>((sp.get("defense") as any)??'none');
+  const [defense,setDefense]=useState<'none'|'approx'>(initialDefenseParam === 'none' ? 'none' : 'approx');
   const [startWeek,setStartWeek]=useState(sp.get("startWeek")??"1"); const [endWeek,setEndWeek]=useState(sp.get("endWeek")??"18");
   const [data,setData]=useState<Api|null>(null), [loading,setLoading]=useState(true), [error,setError]=useState<string|null>(null);
   const refresh = async () => {
@@ -54,7 +55,7 @@ export default function SchoolDetail({ params }: { params: { school: string } })
   if (error) return <div className="card"><h2>Error</h2><pre>{error}</pre></div>;
 
   return (<div className="card">
-    <h2>{data?.school} — Week-by-Week ({data?.format?.toUpperCase()})</h2>
+    <h2>{data?.school} — Week-by-Week ({data?.format?.toUpperCase()} + DEF)</h2>
     <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, margin:'12px 0' }}>
       <label>Season<input type="number" value={season} onChange={e=>setSeason(e.target.value)} style={{ marginLeft:8, width:100 }}/></label>
       <label>Format<select value={format} onChange={e=>setFormat(e.target.value)} style={{ marginLeft:8 }}><option value="ppr">PPR</option><option value="half-ppr">Half-PPR</option><option value="standard">Standard</option></select></label>

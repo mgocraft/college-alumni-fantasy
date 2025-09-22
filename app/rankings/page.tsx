@@ -14,7 +14,7 @@ export default function RankingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const q = new URLSearchParams({ season, week, format, mode, includeK: String(true), defense: "none" }).toString();
+      const q = new URLSearchParams({ season, week, format, mode, includeK: String(true), defense: "approx" }).toString();
       const response = await fetchJson<Api>(`/api/scores?${q}`);
       if (response && typeof response === "object" && "error" in response) {
         const message = typeof (response as { error?: unknown }).error === "string"
@@ -33,7 +33,7 @@ export default function RankingsPage() {
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(()=>{ void load(); }, []);
-  return (<div className="card"><h2>Rankings — Week {data?.week ?? week} ({data?.format?.toUpperCase() ?? format.toUpperCase()})</h2>
+  return (<div className="card"><h2>Rankings — Week {data?.week ?? week} ({data?.format?.toUpperCase() ?? format.toUpperCase()} + DEF)</h2>
     <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, margin:'12px 0' }}>
       <label>Season<input type="number" value={season} onChange={e=>setSeason(e.target.value)} style={{ marginLeft:8, width:100 }}/></label>
       <label>Week<input type="number" min={1} max={18} value={week} onChange={e=>setWeek(e.target.value)} style={{ marginLeft:8, width:80 }}/></label>
