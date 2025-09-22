@@ -16,6 +16,38 @@ function lineupForSchool(players: Leader[], selectorPoints: Record<string, numbe
   const flex=[...pick(remWR,1),...pick(remRB,1),...pick(remTE,1)].sort(sortBy(selectorPoints)); if (flex.length) chosen.push(flex[0]); return chosen;
 }
 
+const cleanCollegeValue = (value: unknown): string => String(value ?? '').replace(/\s+/g, ' ').trim();
+
+const extractCollegeNames = (college: Leader['college']): string[] => {
+  const sources = Array.isArray(college)
+    ? college
+    : college === null || college === undefined
+      ? []
+      : [college];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const source of sources) {
+    if (source === null || source === undefined) continue;
+    const parts = String(source)
+      .split(';')
+      .map(cleanCollegeValue)
+      .filter(Boolean);
+    for (const part of parts) {
+      const key = part.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(part);
+    }
+  }
+  return result;
+};
+
+const normalizeCollegeName = (value: string): string => {
+  if (!value) return 'Unknown';
+  const lower = value.toLowerCase();
+  return lower === 'unknown' ? 'Unknown' : value;
+};
+
 export async function aggregateByCollegeMode(
   leaders: Leader[], week: number, format: string, mode: Mode, historicalAverages: Record<string, number> | undefined,
   opts: { includeK: boolean; defense: DefenseMode; defenseData?: DefenseWeek } = { includeK: true, defense: 'none' }
@@ -25,12 +57,14 @@ export async function aggregateByCollegeMode(
 
   // group by college
   const groups = new Map<string, Leader[]>();
-  for (const l of leaders) {
-    const rawCollege = l.college === null || l.college === undefined ? "" : String(l.college);
-    const trimmed = rawCollege.trim();
-    const college = trimmed.length ? trimmed : "Unknown";
-    if (!groups.has(college)) groups.set(college, []);
-    groups.get(college)!.push(l as any);
+  for (const leader of leaders) {
+    const extracted = extractCollegeNames(leader.college).map(normalizeCollegeName);
+    const colleges = extracted.filter((name, _idx, arr) => name !== 'Unknown' || arr.length === 1);
+    const targets = colleges.length ? colleges : ['Unknown'];
+    for (const college of targets) {
+      if (!groups.has(college)) groups.set(college, []);
+      groups.get(college)!.push({ ...leader, college } as Leader);
+    }
   }
 
   const defenseData = opts.defense === 'approx' ? (opts.defenseData ?? null) : null;
