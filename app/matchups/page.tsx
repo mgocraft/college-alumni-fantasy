@@ -7,7 +7,7 @@ type MatchResp = { season:number; week:number; format:string; mode:'weekly'|'avg
   home:string; away:string; homePoints:number; awayPoints:number; winner:'home'|'away'|'tie'; homeLineup:Performer[]; awayLineup:Performer[] };
 export default function MatchupsPage() {
   const [season,setSeason]=useState("2025"); const [week,setWeek]=useState("2"); const [format,setFormat]=useState("ppr");
-  const [mode,setMode]=useState<"weekly"|"avg">("weekly"); const [includeK,setIncludeK]=useState(true); const [defense,setDefense]=useState<'none'|'approx'>('none');
+  const [mode,setMode]=useState<"weekly"|"avg">("weekly"); const [includeK,setIncludeK]=useState(true); const [defense,setDefense]=useState<'none'|'approx'>('approx');
   const [home,setHome]=useState("Michigan"); const [away,setAway]=useState("Oklahoma"); const [record,setRecord]=useState(false);
   const [data,setData]=useState<MatchResp|null>(null); const [loading,setLoading]=useState(false); const [error,setError]=useState<string|null>(null);
 

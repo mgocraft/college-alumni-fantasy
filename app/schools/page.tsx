@@ -14,7 +14,7 @@ export default function SchoolsPage() {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetchJson<Api>(`/api/scores?season=2025&week=1&format=ppr&mode=weekly&includeK=true&defense=none`);
+        const response = await fetchJson<Api>(`/api/scores?season=2025&week=1&format=ppr&mode=weekly&includeK=true&defense=approx`);
         if (response && typeof response === "object" && "error" in response) {
           const message = typeof (response as { error?: unknown }).error === "string"
             ? String((response as { error?: unknown }).error)
@@ -39,7 +39,7 @@ export default function SchoolsPage() {
   }, []);
   if (loading) return <div className="card"><h2>Loading weekly alumni lineup scores…</h2></div>;
   if (error) return <div className="card"><h2>Error</h2><pre>{error}</pre></div>;
-  return (<div className="card"><h2>Week {data?.week} — Alumni Lineup Scores (QB, TE, WR, WR, RB, RB, K?, FLEX)</h2>
+  return (<div className="card"><h2>Week {data?.week} — Alumni Lineup Scores (QB, TE, WR, WR, RB, RB, K?, FLEX, DEF)</h2>
     <div className="list">
       {data?.results.map(row => (<div key={row.school} className="card">
         <h3 style={{marginTop:0}}><Link href={`/schools/${encodeURIComponent(row.school)}`}>{row.school}</Link></h3>

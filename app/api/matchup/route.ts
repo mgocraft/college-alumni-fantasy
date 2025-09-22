@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     const format = parseStringParam(url, "format", "ppr", { maxLength: 32, toLowerCase: true });
     const mode = parseEnumParam(url, "mode", ["weekly", "avg"] as const, "weekly");
     const includeK = parseBooleanParam(url, "includeK", true);
-    const defense = parseEnumParam(url, "defense", ["none", "approx"] as const, "none");
+    const defense = parseEnumParam(url, "defense", ["none", "approx"] as const, "approx");
     const home = parseRequiredString(url, "home", { maxLength: 120 });
     const away = parseRequiredString(url, "away", { maxLength: 120 });
     Object.assign(input, { season, week, format, mode, includeK, defense, home, away });

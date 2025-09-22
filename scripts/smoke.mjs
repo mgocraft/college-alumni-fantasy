@@ -16,7 +16,7 @@ const endpoints = [
   },
   {
     name: "scores",
-    path: "/api/scores?season=2025&week=1&format=ppr&mode=weekly&includeK=true&defense=none",
+    path: "/api/scores?season=2025&week=1&format=ppr&mode=weekly&includeK=true&defense=approx",
     validate: (data) => Array.isArray(data?.results) && data.results.length >= 0,
   },
 ];
