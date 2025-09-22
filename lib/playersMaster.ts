@@ -130,6 +130,8 @@ const collectIds = (row: PlayersMasterRow): string[] => {
   return Array.from(ids);
 };
 
+export const collectPlayerRowIds = (row: PlayersMasterRow): string[] => collectIds(row);
+
 export function buildCollegeMaps(rows: PlayersMasterRow[]) {
   const byId = new Map<string, string>();
   const byNameTeam = new Map<string, string>();

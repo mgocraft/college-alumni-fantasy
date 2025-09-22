@@ -14,8 +14,15 @@ import {
   resolveCollege as resolveCollegeFromMaster,
   buildPlayersLookup,
   resolvePlayerRow,
+  collectPlayerRowIds,
   type PlayersMasterLookup,
 } from "./playersMaster";
+import {
+  fetchRosterData,
+  buildRosterCollegeLookup,
+  resolveCollegeFromRoster,
+  type RosterCollegeLookup,
+} from "./roster";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
 
@@ -238,6 +245,7 @@ type CollegeMaps = ReturnType<typeof buildCollegeMaps>;
 type PlayersMasterData = {
   maps: CollegeMaps;
   lookup: PlayersMasterLookup;
+  getRosterColleges: (season: number) => Promise<RosterCollegeLookup>;
 };
 
 let playersMasterDataPromise: Promise<PlayersMasterData> | null = null;
@@ -248,7 +256,41 @@ const ensurePlayersMasterData = async (): Promise<PlayersMasterData> => {
       const rows = await loadPlayersMaster();
       const maps = buildCollegeMaps(rows);
       const lookup = buildPlayersLookup(rows);
-      return { maps, lookup };
+      const rosterCache = new Map<number, RosterCollegeLookup>();
+      const rosterPromises = new Map<number, Promise<RosterCollegeLookup>>();
+      const requestInit: RequestInit = { headers: HEADERS };
+      const fetchOptions = { timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS, retries: NFLVERSE_FETCH_RETRIES };
+      const ensureRoster = async (season: number): Promise<RosterCollegeLookup> => {
+        const cached = rosterCache.get(season);
+        if (cached) return cached;
+        let promise = rosterPromises.get(season);
+        if (!promise) {
+          promise = (async () => {
+            try {
+              const { rows: rosterRows } = await fetchRosterData({
+                season,
+                requestInit,
+                fetchOptions,
+              });
+              const lookup = buildRosterCollegeLookup(rosterRows);
+              rosterCache.set(season, lookup);
+              return lookup;
+            } catch (error) {
+              const err = error instanceof Error ? error : new Error(String(error));
+              // eslint-disable-next-line no-console
+              console.warn(`[nflverse] Failed to load roster colleges for ${season}: ${err.message}`);
+              const fallback: RosterCollegeLookup = { byId: new Map(), byNameTeam: new Map() };
+              rosterCache.set(season, fallback);
+              return fallback;
+            } finally {
+              rosterPromises.delete(season);
+            }
+          })();
+          rosterPromises.set(season, promise);
+        }
+        return promise;
+      };
+      return { maps, lookup, getRosterColleges: ensureRoster };
     })();
     playersMasterDataPromise = playersMasterDataPromise.catch((error) => {
       playersMasterDataPromise = null;
@@ -721,6 +763,7 @@ const ensureDefenseLeaders = (
   leaderMap: Map<string, Leader>,
   snaps: DefSnapRow[],
   playersData: PlayersMasterData,
+  rosterLookup: RosterCollegeLookup,
 ) => {
   for (const snap of snaps) {
     const id = snap.player_id;
@@ -746,10 +789,24 @@ const ensureDefenseLeaders = (
         ? (playerRow as { gsis_position?: string }).gsis_position!
         : "";
     const position = (positionSource || "DEF").toUpperCase();
-    const resolvedCollege = resolveCollegeFromMaster(
-      { player_id: playerRow?.player_id ?? snap.player_id, player_name: resolvedName, team },
-      playersData.maps,
+    const rosterAltIds: string[] = [];
+    if (Array.isArray(snap.alt_ids)) rosterAltIds.push(...snap.alt_ids);
+    if (playerRow) rosterAltIds.push(...collectPlayerRowIds(playerRow));
+    const rosterCollege = resolveCollegeFromRoster(
+      {
+        player_id: snap.player_id ?? playerRow?.player_id,
+        alt_ids: rosterAltIds,
+        player_name: resolvedName,
+        team,
+      },
+      rosterLookup,
     );
+    const resolvedCollege =
+      rosterCollege ??
+      resolveCollegeFromMaster(
+        { player_id: playerRow?.player_id ?? snap.player_id, player_name: resolvedName, team },
+        playersData.maps,
+      );
     if (!leaderMap.has(key)) {
       const leader: Leader = {
         player_id: id,
@@ -788,7 +845,9 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
       code: "PLAYERS_MASTER_FETCH_FAILED",
     });
   }
+  const rosterLookupPromise = playersData.getRosterColleges(season);
   const stats = await fetchWeeklyPlayerStats(season, week);
+  const rosterLookup = await rosterLookupPromise;
   const leaders: Leader[] = [];
   const leaderMap = new Map<string, Leader>();
   for (const stat of stats) {
@@ -815,10 +874,25 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
         ? (playerRow as { gsis_position?: string }).gsis_position!
         : "";
     const position = (positionSource || "").toUpperCase();
-    const college = resolveCollegeFromMaster(
-      { player_id: playerRow?.player_id ?? stat.player_id, player_name: playerRow?.full_name ?? name, team },
-      playersData.maps,
+    const rosterAltIds: string[] = [];
+    if (Array.isArray(stat.alt_ids)) rosterAltIds.push(...stat.alt_ids);
+    if (playerRow) rosterAltIds.push(...collectPlayerRowIds(playerRow));
+    const rosterCollege = resolveCollegeFromRoster(
+      {
+        player_id: stat.player_id ?? playerRow?.player_id,
+        alt_ids: rosterAltIds,
+        player_name: playerRow?.full_name ?? playerRow?.player_name ?? stat.name,
+        name,
+        team,
+      },
+      rosterLookup,
     );
+    const college =
+      rosterCollege ??
+      resolveCollegeFromMaster(
+        { player_id: playerRow?.player_id ?? stat.player_id, player_name: playerRow?.full_name ?? name, team },
+        playersData.maps,
+      );
     const points = computeFantasyPoints(stat, format);
     const leader: Leader = {
       player_id: stat.player_id,
@@ -837,7 +911,7 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
       fetchDefensiveSnaps(season, week),
       fetchTeamDefenseInputs(season, week),
     ]);
-    ensureDefenseLeaders(leaders, leaderMap, snaps, playersData);
+    ensureDefenseLeaders(leaders, leaderMap, snaps, playersData, rosterLookup);
     defenseData = buildDefenseWeek(snaps, defenseInputs);
   }
   return { leaders, defenseData };
