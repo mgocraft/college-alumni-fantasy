@@ -58,6 +58,18 @@ const HEADERS: Record<string, string> = {
   Accept: "text/csv,application/octet-stream,application/gzip",
 };
 
+const GITHUB_API_BASE = "https://api.github.com";
+const NFLVERSE_REPO = "nflverse/nflverse-data";
+const PLAYER_STATS_RELEASE_TAG = "stats_player";
+const PLAYER_STATS_PREFIX = "stats_player_week_";
+const PLAYER_STATS_EXTENSIONS = [".csv.gz", ".csv"] as const;
+const RELEASE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+type GitHubAsset = {
+  name: string;
+  browser_download_url: string;
+};
+
 const toPositiveInt = (value: string | undefined, fallback: number): number => {
   const num = Number(value);
   return Number.isFinite(num) && num > 0 ? Math.trunc(num) : fallback;
@@ -233,12 +245,27 @@ export interface LoadWeekOptions {
 export interface LoadWeekResult {
   leaders: Leader[];
   defenseData?: DefenseWeek;
+  playerStatsSource?: PlayerStatsSourceMeta;
 }
 
+type PlayerStatsSourceMeta = {
+  requestedSeason: number;
+  seasonLoaded: number;
+  releaseTag: string;
+  filename: string;
+  url: string;
+  format: "csv";
+  compression: "none" | "gz";
+};
+
 const playerStatsSeasonCache = new Map<number, Map<number, NflversePlayerStat[]>>();
+const playerStatsSeasonMeta = new Map<number, PlayerStatsSourceMeta>();
+const playerStatsSeasonLoading: Map<number, Promise<Map<number, NflversePlayerStat[]>>> = new Map();
 const snapSeasonCache = new Map<number, Map<number, DefSnapRow[]>>();
 const teamDefenseSeasonCache = new Map<number, Map<number, TeamDefenseInput[]>>();
 const playerColumnWarnings = new Set<number>();
+const releaseAssetCache = new Map<string, { fetchedAt: number; assets: GitHubAsset[] }>();
+const playerStatsParquetHints = new Map<number, string[]>();
 
 type CollegeMaps = ReturnType<typeof buildCollegeMaps>;
 
@@ -335,8 +362,22 @@ type CsvAssetOptions = {
 
 const HEAD_RETRIES = Math.min(1, NFLVERSE_FETCH_RETRIES);
 
-async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
-  const { releaseTag, filename, url, season, week, gz = false, requireHead = true } = options;
+type AssetBufferOptions = {
+  releaseTag: string;
+  filename: string;
+  url: string;
+  season: number;
+  week?: number;
+  requireHead?: boolean;
+};
+
+type AssetBufferResult = {
+  buffer: Buffer;
+  usedCached: boolean;
+};
+
+async function fetchAssetBuffer(options: AssetBufferOptions): Promise<AssetBufferResult> {
+  const { releaseTag, filename, url, season, week, requireHead = true } = options;
   const cached = await readCachedBuffer(releaseTag, filename);
   const cachedBuffer = cached?.buffer;
   const cachedIsStale = cached?.stale ?? false;
@@ -436,10 +477,16 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
   if (!usedCached) {
     await writeCachedBuffer(releaseTag, filename, source);
   }
+  return { buffer: source, usedCached };
+}
+
+async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
+  const { releaseTag, filename, gz = false } = options;
+  const { buffer } = await fetchAssetBuffer(options);
   let text: string;
   if (gz) {
     try {
-      text = gunzipSync(source).toString("utf-8");
+      text = gunzipSync(buffer).toString("utf-8");
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       // eslint-disable-next-line no-console
@@ -447,10 +494,235 @@ async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
       throw createErrorWithCause(`[nflverse] Failed to unzip ${releaseTag}/${filename}: ${err.message}`, err);
     }
   } else {
-    text = source.toString("utf-8");
+    text = buffer.toString("utf-8");
   }
   return parseCsvSafe(text, `${releaseTag}/${filename}`);
 }
+
+const recordParquetHint = (season: number, url: string) => {
+  const existing = playerStatsParquetHints.get(season) ?? [];
+  if (existing.includes(url)) return;
+  playerStatsParquetHints.set(season, [...existing, url]);
+};
+
+const buildGitHubHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "User-Agent": HEADERS["User-Agent"] ?? DEFAULT_USER_AGENT,
+    Accept: "application/vnd.github+json",
+  };
+  const token = process.env.GITHUB_TOKEN?.trim();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+};
+
+const fetchReleaseAssets = async (tag: string): Promise<GitHubAsset[]> => {
+  const now = Date.now();
+  const cached = releaseAssetCache.get(tag);
+  if (cached && now - cached.fetchedAt < RELEASE_CACHE_TTL_MS) {
+    return cached.assets;
+  }
+
+  const url = `${GITHUB_API_BASE}/repos/${NFLVERSE_REPO}/releases/tags/${tag}`;
+  const headers = buildGitHubHeaders();
+  let buffer: Buffer;
+  try {
+    buffer = await fetchBuffer(url, { headers, cache: "no-store" }, {
+      timeoutMs: NFLVERSE_FETCH_TIMEOUT_MS,
+      retries: NFLVERSE_FETCH_RETRIES,
+    });
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) {
+      releaseAssetCache.set(tag, { fetchedAt: now, assets: [] });
+      return [];
+    }
+    throw error;
+  }
+
+  let assets: GitHubAsset[] = [];
+  try {
+    const parsed = JSON.parse(buffer.toString("utf-8"));
+    const list = Array.isArray(parsed?.assets) ? parsed.assets : [];
+    assets = list
+      .filter((asset: unknown): asset is GitHubAsset =>
+        Boolean(
+          asset &&
+          typeof (asset as { name?: unknown }).name === "string" &&
+          typeof (asset as { browser_download_url?: unknown }).browser_download_url === "string",
+        ),
+      )
+      .map((asset: GitHubAsset) => ({ name: asset.name, browser_download_url: asset.browser_download_url }));
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    throw createErrorWithCause(`[nflverse] Failed to parse GitHub release response for ${tag}: ${err.message}`, err);
+  }
+
+  releaseAssetCache.set(tag, { fetchedAt: Date.now(), assets });
+  return assets;
+};
+
+const tryLegacyPlayerStatsRows = async (season: number): Promise<PlayerStatsRowsResult | null> => {
+  const filename = `stats_player_week_${season}.csv.gz`;
+  const url = playerStatsUrl(season);
+  try {
+    const { buffer } = await fetchAssetBuffer({
+      releaseTag: PLAYER_STATS_RELEASE_TAG,
+      filename,
+      url,
+      season,
+      requireHead: true,
+    });
+    let text: string;
+    try {
+      text = gunzipSync(buffer).toString("utf-8");
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      throw createErrorWithCause(`[nflverse] Failed to unzip ${PLAYER_STATS_RELEASE_TAG}/${filename}: ${err.message}`, err);
+    }
+    const rows = parseCsvSafe(text, `${PLAYER_STATS_RELEASE_TAG}/${filename}`);
+    return {
+      rows,
+      asset: {
+        seasonLoaded: season,
+        releaseTag: PLAYER_STATS_RELEASE_TAG,
+        filename,
+        url,
+        format: "csv",
+        compression: "gz",
+      },
+    };
+  } catch (error) {
+    if (error instanceof NflverseAssetMissingError) return null;
+    if (error instanceof HttpError && error.status === 404) return null;
+    throw error;
+  }
+};
+
+type PlayerStatsAssetInfo = {
+  seasonLoaded: number;
+  releaseTag: string;
+  filename: string;
+  url: string;
+  format: "csv";
+  compression: "none" | "gz";
+};
+
+const locatePlayerStatsAsset = async (season: number): Promise<PlayerStatsAssetInfo | null> => {
+  const assets = await fetchReleaseAssets(PLAYER_STATS_RELEASE_TAG);
+  if (!assets.length) return null;
+  const prefix = `${PLAYER_STATS_PREFIX}${season}`;
+  const matches = assets.filter((asset) => asset.name?.startsWith(prefix));
+  if (!matches.length) {
+    const parquetCandidate = assets.find((asset) => asset.name?.startsWith(prefix) && asset.name.endsWith(".parquet"));
+    if (parquetCandidate) {
+      recordParquetHint(season, parquetCandidate.browser_download_url);
+    }
+    return null;
+  }
+
+  for (const ext of PLAYER_STATS_EXTENSIONS) {
+    const exactName = `${prefix}${ext}`;
+    const candidate = matches.find((asset) => asset.name === exactName);
+    if (candidate) {
+      return {
+        seasonLoaded: season,
+        releaseTag: PLAYER_STATS_RELEASE_TAG,
+        filename: candidate.name,
+        url: candidate.browser_download_url,
+        format: "csv",
+        compression: ext === ".csv.gz" ? "gz" : "none",
+      };
+    }
+  }
+
+  const fallback = matches.find((asset) =>
+    PLAYER_STATS_EXTENSIONS.some((ext) => asset.name.endsWith(ext)),
+  );
+
+  if (fallback) {
+    const ext = PLAYER_STATS_EXTENSIONS.find((entry) => fallback.name.endsWith(entry)) ?? PLAYER_STATS_EXTENSIONS[0];
+    return {
+      seasonLoaded: season,
+      releaseTag: PLAYER_STATS_RELEASE_TAG,
+      filename: fallback.name,
+      url: fallback.browser_download_url,
+      format: "csv",
+      compression: ext === ".csv.gz" ? "gz" : "none",
+    };
+  }
+
+  const parquetOnly = matches.find((asset) => asset.name.endsWith(".parquet"));
+  if (parquetOnly) {
+    recordParquetHint(season, parquetOnly.browser_download_url);
+  }
+
+  return null;
+};
+
+type PlayerStatsRowsResult = {
+  rows: CsvRow[];
+  asset: PlayerStatsAssetInfo;
+};
+
+const resolvePlayerStatsAsset = async (season: number): Promise<PlayerStatsAssetInfo> => {
+  const hints: string[] = [];
+  const seasonsToTry = season > 1900 ? [season, season - 1] : [season];
+  for (const candidate of seasonsToTry) {
+    const asset = await locatePlayerStatsAsset(candidate);
+    if (asset) {
+      if (candidate !== season) {
+        const parquetHints = playerStatsParquetHints.get(season);
+        if (parquetHints?.length) hints.push(...parquetHints);
+      }
+      return asset;
+    }
+    const parquetHints = playerStatsParquetHints.get(candidate);
+    if (parquetHints?.length) {
+      hints.push(...parquetHints);
+    }
+  }
+
+  const error = new NflverseAssetMissingError({
+    url: playerStatsUrl(season),
+    releaseTag: PLAYER_STATS_RELEASE_TAG,
+    season,
+  });
+  if (hints.length) {
+    for (const hint of hints) {
+      if (!error.urlHints.includes(hint)) {
+        error.urlHints.push(hint);
+      }
+    }
+  }
+  throw error;
+};
+
+const loadPlayerStatsRows = async (season: number): Promise<PlayerStatsRowsResult> => {
+  const legacy = await tryLegacyPlayerStatsRows(season);
+  if (legacy) return legacy;
+  const asset = await resolvePlayerStatsAsset(season);
+  const { buffer } = await fetchAssetBuffer({
+    releaseTag: asset.releaseTag,
+    filename: asset.filename,
+    url: asset.url,
+    season: asset.seasonLoaded,
+    requireHead: false,
+  });
+  let text: string;
+  if (asset.compression === "gz") {
+    try {
+      text = gunzipSync(buffer).toString("utf-8");
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      throw createErrorWithCause(`[nflverse] Failed to unzip ${asset.releaseTag}/${asset.filename}: ${err.message}`, err);
+    }
+  } else {
+    text = buffer.toString("utf-8");
+  }
+  const rows = parseCsvSafe(text, `${asset.releaseTag}/${asset.filename}`);
+  return { rows, asset };
+};
 
 
 const PLAYER_COLUMN_GROUPS: { field: string; aliases: string[] }[] = [
@@ -680,26 +952,57 @@ const parseTeamDefenseRow = (row: CsvRow, fallbackSeason: number): TeamDefenseIn
 };
 
 const loadSeasonPlayerStats = async (season: number): Promise<Map<number, NflversePlayerStat[]>> => {
-  if (playerStatsSeasonCache.has(season)) return playerStatsSeasonCache.get(season)!;
+  const cached = playerStatsSeasonCache.get(season);
+  if (cached) return cached;
 
-  const rows = await fetchCsvAsset({
-    releaseTag: "stats_player",
-    filename: `stats_player_week_${season}.csv.gz`,
-    url: playerStatsUrl(season),
-    season,
-    gz: true,
+  const pending = playerStatsSeasonLoading.get(season);
+  if (pending) return pending;
+
+  const loadPromise = (async () => {
+    const { rows, asset } = await loadPlayerStatsRows(season);
+    verifyPlayerStatColumns(rows, asset.seasonLoaded);
+    const grouped = new Map<number, NflversePlayerStat[]>();
+    for (const row of rows) {
+      const parsed = parsePlayerStatRow(row, asset.seasonLoaded);
+      if (!parsed || (parsed.season && parsed.season !== asset.seasonLoaded)) continue;
+      if (!grouped.has(parsed.week)) grouped.set(parsed.week, []);
+      grouped.get(parsed.week)!.push(parsed);
+    }
+
+    const storeMeta = (seasonKey: number, requestedSeason: number) => {
+      const meta: PlayerStatsSourceMeta = {
+        requestedSeason,
+        seasonLoaded: asset.seasonLoaded,
+        releaseTag: asset.releaseTag,
+        filename: asset.filename,
+        url: asset.url,
+        format: asset.format,
+        compression: asset.compression,
+      };
+      playerStatsSeasonCache.set(seasonKey, grouped);
+      playerStatsSeasonMeta.set(seasonKey, meta);
+    };
+
+    storeMeta(asset.seasonLoaded, asset.seasonLoaded);
+    if (asset.seasonLoaded !== season) {
+      storeMeta(season, season);
+      const hints = playerStatsParquetHints.get(season);
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[nflverse] Falling back to previous season weekly stats",
+        { requestedSeason: season, loadedSeason: asset.seasonLoaded, hints },
+      );
+    } else if (!playerStatsSeasonCache.has(season)) {
+      storeMeta(season, season);
+    }
+
+    return grouped;
+  })().finally(() => {
+    playerStatsSeasonLoading.delete(season);
   });
 
-  verifyPlayerStatColumns(rows, season);
-  const grouped = new Map<number, NflversePlayerStat[]>();
-  for (const row of rows) {
-    const parsed = parsePlayerStatRow(row, season);
-    if (!parsed || (parsed.season && parsed.season !== season)) continue;
-    if (!grouped.has(parsed.week)) grouped.set(parsed.week, []);
-    grouped.get(parsed.week)!.push(parsed);
-  }
-  playerStatsSeasonCache.set(season, grouped);
-  return grouped;
+  playerStatsSeasonLoading.set(season, loadPromise);
+  return loadPromise;
 };
 
 export async function fetchWeeklyPlayerStats(season: number, week: number): Promise<NflversePlayerStat[]> {
@@ -907,9 +1210,10 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
       code: "PLAYERS_MASTER_FETCH_FAILED",
     });
   }
-  const rosterLookupPromise = playersData.getRosterColleges(season);
   const stats = await fetchWeeklyPlayerStats(season, week);
-  const rosterLookup = await rosterLookupPromise;
+  const playerStatsSource = playerStatsSeasonMeta.get(season);
+  const effectiveSeason = playerStatsSource?.seasonLoaded ?? season;
+  const rosterLookup = await playersData.getRosterColleges(effectiveSeason);
   const leaders: Leader[] = [];
   const leaderMap = new Map<string, Leader>();
   for (const stat of stats) {
@@ -970,13 +1274,13 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
   let defenseData: DefenseWeek | undefined;
   if (includeDefense) {
     const [snaps, defenseInputs] = await Promise.all([
-      fetchDefensiveSnaps(season, week),
-      fetchTeamDefenseInputs(season, week),
+      fetchDefensiveSnaps(effectiveSeason, week),
+      fetchTeamDefenseInputs(effectiveSeason, week),
     ]);
     ensureDefenseLeaders(leaders, leaderMap, snaps, playersData, rosterLookup);
     defenseData = buildDefenseWeek(snaps, defenseInputs);
   }
-  return { leaders, defenseData };
+  return { leaders, defenseData, playerStatsSource };
 }
 
 export async function computeHistoricalAverages(season: number, week: number, format: string): Promise<Record<string, number>> {
