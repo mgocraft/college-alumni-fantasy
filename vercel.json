@@ -1,0 +1,11 @@
+{
+  "crons": [
+    {
+      "path": "/api/admin/precompute?mode=both&map=per-week",
+      "schedule": "0 9 * * *",
+      "headers": {
+        "x-admin-token": "@admin_precompute_token"
+      }
+    }
+  ]
+}

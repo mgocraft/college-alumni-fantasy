@@ -8,14 +8,15 @@
     "start": "next start",
     "lint": "next lint",
     "test": "node --test tests",
-    "smoke": "node ./scripts/smoke.mjs"
+    "smoke": "node ./scripts/smoke.mjs",
+    "precompute:one": "tsx scripts/precomputeWeekly.ts"
   },
   "dependencies": {
     "next": "14.2.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "zod": "3.23.8",
-    "recharts": "2.12.7"
+    "recharts": "2.12.7",
+    "zod": "3.23.8"
   },
   "devDependencies": {
     "@types/node": "20.11.30",
@@ -23,6 +24,7 @@
     "@types/react-dom": "18.2.22",
     "eslint": "8.57.0",
     "eslint-config-next": "14.2.5",
+    "tsx": "^4.7.1",
     "typescript": "5.4.5"
   }
 }
