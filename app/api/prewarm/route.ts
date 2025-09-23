@@ -75,6 +75,7 @@ export async function GET(req: Request) {
             includeK: String(includeK),
             defense,
           });
+          qs.set("override", `${season}-${w}`);
           reqs.push(`${base}?${qs.toString()}`);
         }
       }

@@ -1,4 +1,5 @@
 import { promises as fs } from "fs";
+import { createRequire } from "module";
 import os from "os";
 import path from "path";
 import { gunzipSync } from "zlib";
@@ -63,7 +64,33 @@ const NFLVERSE_REPO = "nflverse/nflverse-data";
 const PLAYER_STATS_RELEASE_TAG = "stats_player";
 const PLAYER_STATS_PREFIX = "stats_player_week_";
 const PLAYER_STATS_EXTENSIONS = [".csv.gz", ".csv"] as const;
+const TEAM_DEFENSE_RELEASE_TAG = "stats_team";
+const TEAM_DEFENSE_PREFIX = "stats_team_week_";
+const TEAM_DEFENSE_EXTENSIONS = [".parquet", ".csv.gz", ".csv"] as const;
 const RELEASE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const requireBase = typeof __filename === "string" ? __filename : path.join(process.cwd(), "noop.js");
+const nodeRequire = createRequire(requireBase);
+
+class ParquetNotSupportedError extends Error {
+  constructor() {
+    super("PARQUET_NOT_SUPPORTED");
+    this.name = "ParquetNotSupportedError";
+  }
+}
+
+let parquetSupport: boolean | null = null;
+
+const isParquetSupported = (): boolean => {
+  if (parquetSupport !== null) return parquetSupport;
+  try {
+    nodeRequire.resolve("parquetjs-lite");
+    parquetSupport = true;
+  } catch {
+    parquetSupport = false;
+  }
+  return parquetSupport;
+};
 
 type GitHubAsset = {
   name: string;
@@ -87,7 +114,8 @@ const NFLVERSE_FETCH_TIMEOUT_MS = toPositiveMs(
 );
 const NFLVERSE_FETCH_RETRIES = Math.max(0, NFLVERSE_FETCH_ATTEMPTS - 1);
 
-type CsvRow = Record<string, string>;
+type CsvValue = string | number | boolean | null | undefined;
+type CsvRow = Record<string, CsvValue>;
 
 const parseCsv = (text: string): CsvRow[] => {
   const rows: string[][] = [];
@@ -434,7 +462,7 @@ async function fetchAssetBuffer(options: AssetBufferOptions): Promise<AssetBuffe
           shouldFetch = false;
         } else {
           // eslint-disable-next-line no-console
-          console.warn("NFLVERSE_MISS", { releaseTag, url, season, week });
+          console.warn("NFLVERSE_MISS", { releaseTag, url, season, week, status: error.status });
           throw new NflverseAssetMissingError({ url, releaseTag, season, week });
         }
       } else if (error instanceof HttpError) {
@@ -560,6 +588,129 @@ const fetchReleaseAssets = async (tag: string): Promise<GitHubAsset[]> => {
 
   releaseAssetCache.set(tag, { fetchedAt: Date.now(), assets });
   return assets;
+};
+
+let parquetModulePromise: Promise<unknown> | null = null;
+
+const loadParquetReader = async (): Promise<{ openBuffer: (buffer: Buffer) => Promise<any> }> => {
+  if (!isParquetSupported()) {
+    throw new ParquetNotSupportedError();
+  }
+  if (!parquetModulePromise) {
+    parquetModulePromise = import("parquetjs-lite").then((mod) => {
+      const anyMod = mod as unknown as {
+        ParquetReader?: { openBuffer: (buffer: Buffer) => Promise<any> };
+        default?: { ParquetReader?: { openBuffer: (buffer: Buffer) => Promise<any> } };
+      };
+      const reader = anyMod?.ParquetReader ?? anyMod?.default?.ParquetReader;
+      if (!reader || typeof reader.openBuffer !== "function") {
+        throw new Error("ParquetReader export not found in parquetjs-lite");
+      }
+      return reader;
+    });
+  }
+  const reader = await parquetModulePromise;
+  return reader as { openBuffer: (buffer: Buffer) => Promise<any> };
+};
+
+const parseParquetBuffer = async (buffer: Buffer, context: string): Promise<CsvRow[]> => {
+  let reader: { getCursor: () => any; close: () => Promise<void> } | null = null;
+  try {
+    const ParquetReader = await loadParquetReader();
+    reader = await ParquetReader.openBuffer(buffer);
+    const cursor = reader.getCursor();
+    const rows: CsvRow[] = [];
+    while (true) {
+      // eslint-disable-next-line no-await-in-loop
+      const record = await cursor.next();
+      if (!record) break;
+      const row: CsvRow = {};
+      for (const [key, value] of Object.entries(record as Record<string, unknown>)) {
+        if (!key) continue;
+        if (value === undefined) continue;
+        if (value === null) {
+          row[key] = null;
+        } else if (value instanceof Date) {
+          row[key] = value.toISOString();
+        } else if (Array.isArray(value)) {
+          row[key] = value.map((entry) => String(entry)).join(",");
+        } else if (typeof value === "bigint") {
+          row[key] = value.toString();
+        } else if (typeof value === "object") {
+          row[key] = JSON.stringify(value);
+        } else {
+          row[key] = value as CsvValue;
+        }
+      }
+      rows.push(row);
+    }
+    return rows;
+  } catch (error) {
+    if (error instanceof ParquetNotSupportedError) {
+      throw error;
+    }
+    const err = error instanceof Error ? error : new Error(String(error));
+    throw createErrorWithCause(`[nflverse] Failed to parse Parquet for ${context}: ${err.message}`, err);
+  } finally {
+    if (reader) {
+      try {
+        await reader.close();
+      } catch (closeError) {
+        const err = closeError instanceof Error ? closeError : new Error(String(closeError));
+        // eslint-disable-next-line no-console
+        console.warn(`[nflverse] Failed to close Parquet reader for ${context}: ${err.message}`);
+      }
+    }
+  }
+};
+
+type ReleaseAssetSelection = {
+  releaseTag: string;
+  filename: string;
+  url: string;
+  format: "csv" | "parquet";
+  compression: "none" | "gz";
+};
+
+const buildAssetSelection = (
+  releaseTag: string,
+  asset: GitHubAsset,
+  extension: string,
+): ReleaseAssetSelection => ({
+  releaseTag,
+  filename: asset.name,
+  url: asset.browser_download_url,
+  format: extension === ".parquet" ? "parquet" : "csv",
+  compression: extension === ".csv.gz" ? "gz" : "none",
+});
+
+const listReleaseAssetCandidates = (
+  releaseTag: string,
+  prefix: string,
+  candidates: GitHubAsset[],
+  extensions: readonly string[],
+): ReleaseAssetSelection[] => {
+  if (!candidates.length) return [];
+  const results: ReleaseAssetSelection[] = [];
+  const seen = new Set<string>();
+  for (const ext of extensions) {
+    const exact = candidates.find((asset) => asset.name === `${prefix}${ext}`);
+    if (exact && !seen.has(exact.name)) {
+      results.push(buildAssetSelection(releaseTag, exact, ext));
+      seen.add(exact.name);
+    }
+  }
+  for (const ext of extensions) {
+    for (const asset of candidates) {
+      if (seen.has(asset.name)) continue;
+      if (asset.name.endsWith(ext)) {
+        results.push(buildAssetSelection(releaseTag, asset, ext));
+        seen.add(asset.name);
+        break;
+      }
+    }
+  }
+  return results;
 };
 
 const tryLegacyPlayerStatsRows = async (season: number): Promise<PlayerStatsRowsResult | null> => {
@@ -1037,14 +1188,120 @@ export async function fetchDefensiveSnaps(season: number, week: number): Promise
 
 const loadSeasonTeamDefense = async (season: number): Promise<Map<number, TeamDefenseInput[]>> => {
   if (teamDefenseSeasonCache.has(season)) return teamDefenseSeasonCache.get(season)!;
-  const rows = await fetchCsvAsset({
-    releaseTag: "nflfastR-weekly",
-    filename: `stats_team_week_${season}.csv`,
-    url: `${RELEASE_BASE}/nflfastR-weekly/stats_team_week_${season}.csv`,
+  const prefix = `${TEAM_DEFENSE_PREFIX}${season}`;
+  const assets = await fetchReleaseAssets(TEAM_DEFENSE_RELEASE_TAG);
+  const candidates = assets.filter((asset) => asset.name?.startsWith(prefix));
+  const assetOptions = listReleaseAssetCandidates(
+    TEAM_DEFENSE_RELEASE_TAG,
+    prefix,
+    candidates,
+    TEAM_DEFENSE_EXTENSIONS,
+  );
+
+  if (!assetOptions.length) {
+    const expectedUrl = `${RELEASE_BASE}/${TEAM_DEFENSE_RELEASE_TAG}/${prefix}${TEAM_DEFENSE_EXTENSIONS[0]}`;
+    const error = new NflverseAssetMissingError({
+      url: expectedUrl,
+      releaseTag: TEAM_DEFENSE_RELEASE_TAG,
+      season,
+    });
+    for (const candidate of candidates) {
+      if (!error.urlHints.includes(candidate.browser_download_url)) {
+        error.urlHints.push(candidate.browser_download_url);
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.warn("[nflverse] stats_team asset not found", {
+      releaseTag: TEAM_DEFENSE_RELEASE_TAG,
+      season,
+      prefix,
+      candidates: candidates.map((asset) => asset.name),
+    });
+    throw error;
+  }
+
+  let selected: ReleaseAssetSelection | null = null;
+  let rows: CsvRow[] | null = null;
+
+  for (const option of assetOptions) {
+    try {
+      const { buffer } = await fetchAssetBuffer({
+        releaseTag: option.releaseTag,
+        filename: option.filename,
+        url: option.url,
+        season,
+      });
+      if (option.format === "parquet") {
+        rows = await parseParquetBuffer(buffer, `${option.releaseTag}/${option.filename}`);
+      } else {
+        let text: string;
+        if (option.compression === "gz") {
+          try {
+            text = gunzipSync(buffer).toString("utf-8");
+          } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            // eslint-disable-next-line no-console
+            console.error(`[nflverse] Failed to unzip ${option.releaseTag}/${option.filename}`, err);
+            throw createErrorWithCause(
+              `[nflverse] Failed to unzip ${option.releaseTag}/${option.filename}: ${err.message}`,
+              err,
+            );
+          }
+        } else {
+          text = buffer.toString("utf-8");
+        }
+        rows = parseCsvSafe(text, `${option.releaseTag}/${option.filename}`);
+      }
+      selected = option;
+      break;
+    } catch (error) {
+      if (option.format === "parquet" && error instanceof ParquetNotSupportedError) {
+        // eslint-disable-next-line no-console
+        console.warn("[nflverse] Parquet not supported, retrying with fallback", {
+          season,
+          prefix,
+          filename: option.filename,
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (!selected || !rows) {
+    if (assetOptions.some((asset) => asset.format === "parquet")) {
+      throw new HttpError(500, "PARQUET_NOT_SUPPORTED", {
+        detail: "Install parquetjs-lite to parse stats_team parquet assets.",
+        code: "PARQUET_NOT_SUPPORTED",
+      });
+    }
+    const expectedUrl = `${RELEASE_BASE}/${TEAM_DEFENSE_RELEASE_TAG}/${prefix}${TEAM_DEFENSE_EXTENSIONS[0]}`;
+    const error = new NflverseAssetMissingError({
+      url: expectedUrl,
+      releaseTag: TEAM_DEFENSE_RELEASE_TAG,
+      season,
+    });
+    for (const candidate of candidates) {
+      if (!error.urlHints.includes(candidate.browser_download_url)) {
+        error.urlHints.push(candidate.browser_download_url);
+      }
+    }
+    throw error;
+  }
+
+  // eslint-disable-next-line no-console
+  console.info("[nflverse] Using stats_team asset", {
     season,
+    releaseTag: selected.releaseTag,
+    filename: selected.filename,
+    format: selected.format,
+    compression: selected.compression,
+    prefix,
   });
+
+  const rowsValue = rows as CsvRow[];
   const grouped = new Map<number, TeamDefenseInput[]>();
-  for (const row of rows) {
+  for (const row of rowsValue) {
     const parsed = parseTeamDefenseRow(row, season);
     if (!parsed || (parsed.season && parsed.season !== season)) continue;
     if (!grouped.has(parsed.week)) grouped.set(parsed.week, []);

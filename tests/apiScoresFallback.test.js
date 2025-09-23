@@ -54,7 +54,9 @@ test('scores API uses stat fallback to populate colleges', async (t) => {
 
   const { GET } = loadTsModule(path.resolve(__dirname, '../app/api/scores/route.ts'));
 
-  const response = await GET(new Request('http://test/api/scores?season=2025&week=1&format=ppr&mode=weekly&defense=none'));
+  const response = await GET(
+    new Request('http://test/api/scores?season=2025&week=1&override=2025-1&format=ppr&mode=weekly&defense=none'),
+  );
   assert.equal(response.status, 200);
 
   const payload = await response.json();
