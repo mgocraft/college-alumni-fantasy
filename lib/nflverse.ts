@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import { createRequire } from "module";
 import os from "os";
 import path from "path";
+import { pathToFileURL } from "url";
 import { gunzipSync } from "zlib";
 import { HttpError } from "./api";
 
@@ -69,8 +70,21 @@ const TEAM_DEFENSE_PREFIX = "stats_team_week_";
 const TEAM_DEFENSE_EXTENSIONS = [".parquet", ".csv.gz", ".csv"] as const;
 const RELEASE_CACHE_TTL_MS = 5 * 60 * 1000;
 
-const requireBase = typeof __filename === "string" ? __filename : path.join(process.cwd(), "noop.js");
-const nodeRequire = createRequire(requireBase);
+const resolveRequireBase = (): string => {
+  if (typeof __filename === "string" && __filename.length) {
+    try {
+      return pathToFileURL(path.isAbsolute(__filename) ? __filename : path.join(process.cwd(), __filename)).href;
+    } catch {
+      // ignore and fall through to fallback
+    }
+  }
+  return pathToFileURL(path.join(process.cwd(), "package.json")).href;
+};
+
+declare const __non_webpack_require__: NodeJS.Require | undefined;
+
+const nodeRequire: NodeJS.Require =
+  typeof __non_webpack_require__ === "function" ? __non_webpack_require__ : createRequire(resolveRequireBase());
 
 class ParquetNotSupportedError extends Error {
   constructor() {
@@ -618,6 +632,9 @@ const parseParquetBuffer = async (buffer: Buffer, context: string): Promise<CsvR
   try {
     const ParquetReader = await loadParquetReader();
     reader = await ParquetReader.openBuffer(buffer);
+    if (!reader) {
+      throw new Error("[nflverse] Failed to open Parquet buffer for reader initialization");
+    }
     const cursor = reader.getCursor();
     const rows: CsvRow[] = [];
     while (true) {
