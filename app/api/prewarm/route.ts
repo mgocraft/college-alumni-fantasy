@@ -9,6 +9,7 @@ import {
   parseIntegerParam,
   respondWithError,
 } from "@/lib/api";
+import { lastCompletedNflWeek } from "@/utils/nflWeek";
 
 export const runtime = "nodejs";
 export const revalidate = 0;
@@ -44,9 +45,10 @@ export async function GET(req: Request) {
     query: Object.fromEntries(url.searchParams.entries()),
   };
   try {
-    const season = parseIntegerParam(url, "season", 2025, { min: 1900, max: 2100 });
-    const startWeek = parseIntegerParam(url, "startWeek", 1, { min: 1, max: 30 });
-    const defaultEndWeek = Math.max(18, startWeek);
+    const defaults = lastCompletedNflWeek();
+    const season = parseIntegerParam(url, "season", defaults.season, { min: 1900, max: 2100 });
+    const startWeek = parseIntegerParam(url, "startWeek", defaults.week, { min: 1, max: 30 });
+    const defaultEndWeek = Math.max(defaults.week, startWeek);
     const endWeek = parseIntegerParam(url, "endWeek", defaultEndWeek, { min: startWeek, max: 30 });
     const formats = parseDelimitedList(url, "formats", ["ppr"], {
       transform: (value) => value.toLowerCase(),
@@ -59,6 +61,7 @@ export async function GET(req: Request) {
     });
     const includeK = parseBooleanParam(url, "includeK", true);
     const defense = parseEnumParam(url, "defense", ["none", "approx"] as const, "none");
+    Object.assign(input, { defaults, season, startWeek, endWeek, formats, modes, includeK, defense });
     const base = `${url.origin}/api/scores`;
     const reqs: string[] = [];
     for (const fmt of formats) {

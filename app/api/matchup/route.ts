@@ -12,6 +12,7 @@ import {
   parseStringParam,
   respondWithError,
 } from "@/lib/api";
+import { lastCompletedNflWeek } from "@/utils/nflWeek";
 
 export const runtime = "nodejs";
 export const revalidate = 0;
@@ -22,15 +23,16 @@ export async function GET(req: Request) {
     query: Object.fromEntries(url.searchParams.entries()),
   };
   try {
-    const season = parseIntegerParam(url, "season", 2025, { min: 1900, max: 2100 });
-    const week = parseIntegerParam(url, "week", 1, { min: 1, max: 30 });
+    const defaults = lastCompletedNflWeek();
+    const season = parseIntegerParam(url, "season", defaults.season, { min: 1900, max: 2100 });
+    const week = parseIntegerParam(url, "week", defaults.week, { min: 1, max: 30 });
     const format = parseStringParam(url, "format", "ppr", { maxLength: 32, toLowerCase: true });
     const mode = parseEnumParam(url, "mode", ["weekly", "avg"] as const, "weekly");
     const includeK = parseBooleanParam(url, "includeK", true);
     const defense = parseEnumParam(url, "defense", ["none", "approx"] as const, "approx");
     const home = parseRequiredString(url, "home", { maxLength: 120 });
     const away = parseRequiredString(url, "away", { maxLength: 120 });
-    Object.assign(input, { season, week, format, mode, includeK, defense, home, away });
+    Object.assign(input, { defaults, season, week, format, mode, includeK, defense, home, away });
     if (home.toLowerCase() === away.toLowerCase()) {
       throw new HttpError(400, "home and away must be different schools");
     }
@@ -40,7 +42,7 @@ export async function GET(req: Request) {
     const weekPromise = loadWeek({ season, week, format, includeDefense });
     const averagesPromise: Promise<Record<string, number> | undefined> =
       mode === "avg" && week > 1 ? computeHistoricalAverages(season, week, format) : Promise.resolve(undefined);
-    const [{ leaders, defenseData }, averages] = await Promise.all([weekPromise, averagesPromise]);
+    const [{ leaders, defenseData, playerStatsSource }, averages] = await Promise.all([weekPromise, averagesPromise]);
     const bySchool = await aggregateByCollegeMode(leaders, week, format, mode, averages, { includeK, defense, defenseData });
     const a = bySchool.find((r) => r.school.toLowerCase() === home.toLowerCase());
     const b = bySchool.find((r) => r.school.toLowerCase() === away.toLowerCase());
@@ -54,6 +56,7 @@ export async function GET(req: Request) {
       mode,
       includeK,
       defense,
+      seasonLoaded: playerStatsSource?.seasonLoaded ?? season,
       home,
       away,
       homePoints,
