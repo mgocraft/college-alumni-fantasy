@@ -17,7 +17,7 @@ Documented in `.env.local.example`:
 
 | Variable | Purpose |
 | --- | --- |
-| `ADMIN_PRECOMPUTE_TOKEN` | Required header for `/api/admin/precompute` and Vercel cron |
+| `ADMIN_PRECOMPUTE_TOKEN` | Required token for `/api/admin/precompute`; send via header or `token` query param |
 | `CFB_SCHEDULE_PROVIDER` | `cfbd` (default) or `espn` |
 | `CFBD_API_KEY` | Required when using the CFBD provider |
 | `APP_TZ` | Human-facing time zone (logs/docs), logic uses UTC |
@@ -60,6 +60,7 @@ Headers: X-Admin-Token: <ADMIN_PRECOMPUTE_TOKEN>
 * `map` → `per-week` (default) or `per-game`.
 * `force=1` rewrites cache entries even if they already exist.
 * Returns `202 {status:"pending"}` when NFL stats are not yet published.
+* When custom headers are unavailable (e.g., Vercel cron), append `&token=<ADMIN_PRECOMPUTE_TOKEN>` to the request URL.
 
 ### CLI
 
@@ -73,7 +74,7 @@ The CLI mirrors the API logic and writes to the same cache keys.
 
 ### Vercel cron
 
-`vercel.json` schedules a daily job at 09:00 UTC (~04:00 America/Chicago) that hits `/api/admin/precompute?mode=both&map=per-week` with the configured admin token secret.
+`vercel.json` schedules a daily job at 09:00 UTC (~04:00 America/Chicago) that hits `/api/admin/precompute?mode=both&map=per-week&token=<ADMIN_PRECOMPUTE_TOKEN>` with the configured admin token secret.
 
 ## Operational notes
 

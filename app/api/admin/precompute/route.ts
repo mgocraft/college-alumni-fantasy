@@ -57,8 +57,19 @@ const parseSeasonType = (value: string | null | undefined, fallback: SeasonType)
   throw new HttpError(400, `seasonType must be regular or postseason`);
 };
 
-const requireAdmin = (req: Request) => {
-  const token = req.headers.get("x-admin-token");
+const ADMIN_HEADER_NAME = "x-admin-token";
+const ADMIN_QUERY_PARAM = "token";
+
+const extractAdminToken = (req: Request, url?: URL) => {
+  const headerToken = req.headers.get(ADMIN_HEADER_NAME)?.trim();
+  if (headerToken) return headerToken;
+
+  const queryToken = (url ?? new URL(req.url)).searchParams.get(ADMIN_QUERY_PARAM)?.trim();
+  return queryToken && queryToken.length > 0 ? queryToken : null;
+};
+
+const requireAdmin = (req: Request, url: URL) => {
+  const token = extractAdminToken(req, url);
   const expected = process.env.ADMIN_PRECOMPUTE_TOKEN?.trim();
   return Boolean(token && expected && token === expected);
 };
@@ -67,11 +78,11 @@ const previewMissing = (rows: { player_id: string; name: string; team: string }[
   rows.slice(0, limit);
 
 export async function GET(req: Request) {
-  if (!requireAdmin(req)) {
+  const url = new URL(req.url);
+
+  if (!requireAdmin(req, url)) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
-
-  const url = new URL(req.url);
 
   try {
     const mode = validateMode(url.searchParams.get("mode") ?? "both");
