@@ -25,6 +25,7 @@ export async function GET(req: Request) {
     let defaultSeason = computed.season;
     let defaultWeek = computed.week;
     const overrideParam = url.searchParams.get("override");
+    let overrideApplied = false;
     if (overrideParam && overrideParam.trim().length > 0) {
       const normalized = overrideParam.trim();
       const match = normalized.match(/^(\d{4})-(\d{1,2})$/);
@@ -33,13 +34,28 @@ export async function GET(req: Request) {
       }
       defaultSeason = Number(match[1]);
       defaultWeek = Number(match[2]);
+      overrideApplied = true;
       // eslint-disable-next-line no-console
       console.warn("[scores] override applied", { override: normalized, season: defaultSeason, week: defaultWeek });
       input.override = normalized;
     }
 
     const season = parseIntegerParam(url, "season", defaultSeason, { min: 1900, max: 2100 });
-    const week = parseIntegerParam(url, "week", defaultWeek, { min: 1, max: 30 });
+    const weekParam = url.searchParams.get("week");
+    const week = overrideApplied
+      ? parseIntegerParam(url, "week", defaultWeek, { min: 1, max: 30 })
+      : defaultWeek;
+    if (!overrideApplied && weekParam && weekParam.trim().length > 0) {
+      const normalizedWeek = weekParam.trim();
+      input.ignoredWeekParam = normalizedWeek;
+      if (Number(normalizedWeek) !== week) {
+        // eslint-disable-next-line no-console
+        console.warn("[scores] Ignoring week parameter without override", {
+          requested: normalizedWeek,
+          using: week,
+        });
+      }
+    }
     const format = parseStringParam(url, "format", "ppr", { maxLength: 32, toLowerCase: true });
     const mode = parseEnumParam(url, "mode", ["weekly", "avg"] as const, "weekly");
     const includeK = parseBooleanParam(url, "includeK", true);

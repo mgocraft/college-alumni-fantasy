@@ -95,7 +95,10 @@ export const respondWithError = (scope: string, error: unknown, options: ErrorRe
     const hints = mergeHints(urlHints, err.urlHints);
     if ((err as { code?: string }).code === "NFLVERSE_ASSET_MISSING") {
       const payload: Record<string, unknown> = {
-        error: err.message,
+        status: "pending",
+        code: "NFLVERSE_ASSET_MISSING",
+        message: err.message,
+        releaseTag: (err as { releaseTag?: string }).releaseTag,
         url: (err as { url?: string }).url,
         season: (err as { season?: number }).season,
         week: (err as { week?: number }).week,
@@ -103,7 +106,7 @@ export const respondWithError = (scope: string, error: unknown, options: ErrorRe
       };
       if (input !== undefined) payload.input = input;
       if (hints.length) payload.urlHints = hints;
-      return NextResponse.json(payload, { status: err.status });
+      return NextResponse.json(payload, { status: 202 });
     }
     if ((err as { code?: string }).code === "PLAYERS_MASTER_FETCH_FAILED") {
       const detail = err.detail ?? err.message;
