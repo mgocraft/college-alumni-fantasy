@@ -17,3 +17,11 @@ npm run dev
 ```
 
 No API keys required — all data comes from nflverse public releases downloaded on demand and cached locally.
+
+### Optional Parquet support
+
+The app automatically falls back to CSV assets, so `parquetjs-lite` is *not* required to run locally or deploy. If you want to parse the nflverse Parquet releases directly (for faster team defense fetches), install it manually with:
+
+```bash
+npm install parquetjs-lite
+```
