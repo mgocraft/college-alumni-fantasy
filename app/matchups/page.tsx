@@ -2,6 +2,7 @@
 'use client';
 import { useState } from "react";
 import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
+import { useDefenseStatus } from "@/utils/useDefenseStatus";
 type Performer = { name:string; position:string; team?:string; points:number; meta?:any };
 type MatchResp = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx';
   home:string; away:string; homePoints:number; awayPoints:number; winner:'home'|'away'|'tie'; homeLineup:Performer[]; awayLineup:Performer[] };
@@ -10,6 +11,14 @@ export default function MatchupsPage() {
   const [mode,setMode]=useState<"weekly"|"avg">("weekly"); const [includeK,setIncludeK]=useState(true); const [defense,setDefense]=useState<'none'|'approx'>('approx');
   const [home,setHome]=useState("Michigan"); const [away,setAway]=useState("Oklahoma"); const [record,setRecord]=useState(false);
   const [data,setData]=useState<MatchResp|null>(null); const [loading,setLoading]=useState(false); const [error,setError]=useState<string|null>(null);
+
+  const parsedSeason = Number.parseInt(season, 10);
+  const parsedWeek = Number.parseInt(week, 10);
+  const defenseStatus = useDefenseStatus({
+    season: Number.isFinite(parsedSeason) && parsedSeason > 0 ? parsedSeason : 2025,
+    week: Number.isFinite(parsedWeek) && parsedWeek > 0 ? parsedWeek : undefined,
+    enabled: defense === 'approx',
+  });
 
   const renderPerf = (p:any) => {
     if ((p.position||'').toUpperCase()==='DEF' && p.meta?.contributors) {
@@ -54,6 +63,16 @@ export default function MatchupsPage() {
       <label><input type="checkbox" checked={record} onChange={e=>setRecord(e.target.checked)} /> Record result</label>
       <button className="btn" onClick={simulate}>Simulate</button>
     </div>
+    {defense === 'approx' && defenseStatus.message && (
+      <div className="badge" style={{ marginTop: 8, background: '#f97316', color: '#0b1220' }}>
+        Defense stats not posted yet; check back later.
+      </div>
+    )}
+    {defense === 'approx' && !defenseStatus.message && defenseStatus.showApproxBadge && (
+      <div className="badge" style={{ marginTop: 8, background: '#facc15', color: '#0b1220' }}>
+        Approx mode (opponent offense)
+      </div>
+    )}
     {loading && <div>Simulating…</div>}
     {error && <div style={{ color:'salmon' }}><b>Error:</b> {error}</div>}
     {data && (<div style={{ marginTop:16 }}>

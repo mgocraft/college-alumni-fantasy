@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { loadSeasonSummary } from "@/lib/seasonSummary";
+import { DefenseUnavailableError, fetchDefenseApprox } from "@/lib/defense";
 
 const DEFAULT_SEASON = 2025;
 const DEFAULT_FORMAT = "ppr";
@@ -25,6 +26,8 @@ function formatTopPlayer(player?: { name: string; position?: string; team?: stri
 export default async function HomePage() {
   let error: string | null = null;
   let summary: Awaited<ReturnType<typeof loadSeasonSummary>> | null = null;
+  let defenseBanner: string | null = null;
+  let showApproxBadge = false;
   try {
     summary = await loadSeasonSummary({
       season: DEFAULT_SEASON,
@@ -37,6 +40,21 @@ export default async function HomePage() {
     error = "Unable to load season summary right now. Please try again later.";
   }
 
+  try {
+    const defense = await fetchDefenseApprox({ season: DEFAULT_SEASON });
+    if (defense.rows.length === 0) {
+      defenseBanner = "Defense stats not posted yet; check back later.";
+    } else if (defense.rows.every((row) => Number(row.score) === 0)) {
+      showApproxBadge = true;
+    }
+  } catch (err) {
+    if (err instanceof DefenseUnavailableError) {
+      defenseBanner = "Defense stats not posted yet; check back later.";
+    } else {
+      console.error("Failed to load defense status", err);
+    }
+  }
+
   const lastWeekLabel = summary && summary.lastCompletedWeek > 0
     ? `Week ${summary.lastCompletedWeek} Points`
     : "Last Week Points";
@@ -46,6 +64,16 @@ export default async function HomePage() {
       <h1>College Alumni Fantasy</h1>
       <p>Weekly fantasy points by <b>college</b> from pro players.</p>
       <p className="badge">nflverse data</p>
+      {defenseBanner && (
+        <p className="badge" style={{ marginTop: 8, background: "#f97316", color: "#0b1220" }}>
+          {defenseBanner}
+        </p>
+      )}
+      {!defenseBanner && showApproxBadge && (
+        <p className="badge" style={{ marginTop: 8, background: "#facc15", color: "#0b1220" }}>
+          Approx mode (opponent offense)
+        </p>
+      )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16 }}>
         <Link className="btn" href="/schools">Browse Schools</Link>
         <Link className="btn" href="/rankings">Rankings</Link>
