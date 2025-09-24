@@ -31,8 +31,17 @@ export function useDefenseStatus({ season, week, enabled }: Options): DefenseSta
 
     const load = async () => {
       try {
-        const rows = await fetchDefense(season, week);
+        const requestedWeek = typeof week === "number" && Number.isFinite(week) && week > 0 ? Math.trunc(week) : undefined;
+        const result = await fetchDefense(season, requestedWeek);
+        const rows = result.rows;
         if (cancelled) return;
+        if (requestedWeek && result.week > 0 && requestedWeek !== result.week) {
+          setStatus({
+            message: `Defense data available for Week ${result.week}, not Week ${requestedWeek}.`,
+            showApproxBadge: result.mode === "approx-opponent-offense",
+          });
+          return;
+        }
         if (!rows.length) {
           setStatus({ message: "Defense stats not posted yet; check back later.", showApproxBadge: false });
           return;
@@ -40,10 +49,10 @@ export function useDefenseStatus({ season, week, enabled }: Options): DefenseSta
         const allZero = rows.every((row) => Number(row.score) === 0);
         if (allZero) {
           console.warn("[alumni] DEF approx returned zero scores", { season, week, teams: rows.length });
-          setStatus({ message: null, showApproxBadge: true });
+          setStatus({ message: null, showApproxBadge: result.mode === "approx-opponent-offense" });
           return;
         }
-        setStatus({ message: null, showApproxBadge: false });
+        setStatus({ message: null, showApproxBadge: result.mode === "approx-opponent-offense" });
       } catch (error) {
         if (cancelled) return;
         console.warn("[alumni] DEF fetch failed", error);

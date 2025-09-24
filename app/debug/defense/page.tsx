@@ -5,9 +5,15 @@ import { fetchDefense, type DefenseRow } from "@/utils/fetchDefense";
 export default function DebugDefense() {
   const [rows, setRows] = useState<DefenseRow[]>([]);
   const [err, setErr] = useState<string>("");
+  const [meta, setMeta] = useState<{ week: number; mode?: string; source?: string } | null>(null);
 
   useEffect(() => {
-    fetchDefense(2025).then(setRows).catch((e) => setErr(String(e)));
+    fetchDefense(2025)
+      .then((result) => {
+        setRows(result.rows);
+        setMeta({ week: result.week, mode: result.mode, source: result.source });
+      })
+      .catch((e) => setErr(String(e)));
   }, []);
 
   if (err) return <div className="p-4 text-red-600">Error: {err}</div>;
@@ -15,7 +21,15 @@ export default function DebugDefense() {
 
   return (
     <div className="p-4 space-y-4">
-      <h1 className="text-2xl font-bold">Defense Debug (2025)</h1>
+      <h1 className="text-2xl font-bold">
+        Defense Debug (2025{meta?.week ? ` — Week ${meta.week}` : ""})
+      </h1>
+      {meta?.mode && (
+        <div className="text-sm text-slate-400">
+          Mode: {meta.mode}
+          {meta.source ? ` · Source: ${meta.source}` : ""}
+        </div>
+      )}
       <table className="min-w-full text-sm">
         <thead>
           <tr>
