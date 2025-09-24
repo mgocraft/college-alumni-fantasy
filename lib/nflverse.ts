@@ -466,6 +466,22 @@ const writeCachedBuffer = async (releaseTag: string, filename: string, contents:
   await fs.writeFile(file, contents);
 };
 
+const deleteCachedBuffer = async (releaseTag: string, filename: string) => {
+  const file = getCachePath(releaseTag, filename);
+  try {
+    await fs.unlink(file);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err?.code === "ENOENT") return;
+    // eslint-disable-next-line no-console
+    console.warn("[nflverse] Failed to delete cached asset", {
+      releaseTag,
+      filename,
+      error: err?.message ?? String(error),
+    });
+  }
+};
+
 type CsvAssetOptions = {
   releaseTag: string;
   filename: string;
@@ -598,21 +614,42 @@ async function fetchAssetBuffer(options: AssetBufferOptions): Promise<AssetBuffe
 
 async function fetchCsvAsset(options: CsvAssetOptions): Promise<CsvRow[]> {
   const { releaseTag, filename, gz = false } = options;
-  const { buffer } = await fetchAssetBuffer(options);
-  let text: string;
-  if (gz) {
-    try {
-      text = gunzipSync(buffer).toString("utf-8");
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      // eslint-disable-next-line no-console
-      console.error(`[nflverse] Failed to unzip ${releaseTag}/${filename}`, err);
-      throw createErrorWithCause(`[nflverse] Failed to unzip ${releaseTag}/${filename}: ${err.message}`, err);
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { buffer } = await fetchAssetBuffer(options);
+    let text: string;
+    if (gz) {
+      try {
+        text = gunzipSync(buffer).toString("utf-8");
+      } catch (error) {
+        lastError = error;
+        await deleteCachedBuffer(releaseTag, filename);
+        if (attempt === 0) {
+          continue;
+        }
+        const err = error instanceof Error ? error : new Error(String(error));
+        // eslint-disable-next-line no-console
+        console.error(`[nflverse] Failed to unzip ${releaseTag}/${filename}`, err);
+        throw createErrorWithCause(`[nflverse] Failed to unzip ${releaseTag}/${filename}: ${err.message}`, err);
+      }
+    } else {
+      text = buffer.toString("utf-8");
     }
-  } else {
-    text = buffer.toString("utf-8");
+    try {
+      return parseCsvSafe(text, `${releaseTag}/${filename}`);
+    } catch (error) {
+      lastError = error;
+      await deleteCachedBuffer(releaseTag, filename);
+      if (attempt === 0) {
+        continue;
+      }
+      throw error;
+    }
   }
-  return parseCsvSafe(text, `${releaseTag}/${filename}`);
+  const err = lastError instanceof Error
+    ? lastError
+    : new Error(`Failed to load CSV for ${releaseTag}/${filename}`);
+  throw err;
 }
 
 const recordParquetHint = (season: number, url: string) => {
