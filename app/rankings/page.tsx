@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
+import { useDefenseStatus } from "@/utils/useDefenseStatus";
 type Performer = { name:string; position:string; team?:string; points:number; college?:string|null; meta?:any };
 type Row = { school:string; totalPoints:number; performers:Performer[] };
 type Api = { season:number; week:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; count:number; results: Row[] };
@@ -10,6 +11,16 @@ export default function RankingsPage() {
   const [season,setSeason]=useState("2025"), [week,setWeek]=useState("1"), [format,setFormat]=useState("ppr");
   const [mode,setMode]=useState<"weekly"|"avg">("weekly");
   const [data,setData]=useState<Api|null>(null), [loading,setLoading]=useState(false), [error,setError]=useState<string|null>(null);
+  const parsedSeason = Number.parseInt(season, 10);
+  const parsedInputWeek = Number.parseInt(week, 10);
+  const computedWeek = typeof data?.week === 'number' && Number.isFinite(data.week) && data.week > 0
+    ? data.week
+    : (Number.isFinite(parsedInputWeek) && parsedInputWeek > 0 ? parsedInputWeek : undefined);
+  const defenseStatus = useDefenseStatus({
+    season: Number.isFinite(parsedSeason) && parsedSeason > 0 ? parsedSeason : 2025,
+    week: computedWeek,
+    enabled: true,
+  });
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -42,6 +53,16 @@ export default function RankingsPage() {
       <button className="btn" onClick={load} disabled={loading}>Update</button>
       <Link className="btn" href="/schools">Browse All</Link>
     </div>
+    {defenseStatus.message && (
+      <div className="badge" style={{ marginTop: 8, background: '#f97316', color: '#0b1220' }}>
+        Defense stats not posted yet; check back later.
+      </div>
+    )}
+    {!defenseStatus.message && defenseStatus.showApproxBadge && (
+      <div className="badge" style={{ marginTop: 8, background: '#facc15', color: '#0b1220' }}>
+        Approx mode (opponent offense)
+      </div>
+    )}
     {loading && <div>Loading…</div>}{error && <div style={{color:'salmon'}}><b>Error:</b> {error}</div>}
     <div style={{ overflowX:'auto', marginTop:12 }}><table style={{ width:'100%', borderCollapse:'collapse' }}>
       <thead><tr><th style={{textAlign:'left'}}>Rank</th><th style={{textAlign:'left'}}>School</th><th style={{textAlign:'right'}}>Points</th><th style={{textAlign:'left'}}>Top Performers</th></tr></thead>

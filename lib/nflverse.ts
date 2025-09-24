@@ -27,6 +27,7 @@ import {
 } from "./roster";
 import { normalize } from "./utils";
 import type { Leader } from "./types";
+import { DefenseUnavailableError, fetchDefenseApprox } from "./defense";
 
 const RELEASE_BASE = "https://github.com/nflverse/nflverse-data/releases/download";
 const DEFAULT_USER_AGENT = "college-alumni-fantasy/1.0 (+https://github.com/)";
@@ -1453,8 +1454,45 @@ const loadSeasonTeamDefense = async (season: number): Promise<Map<number, TeamDe
 };
 
 export async function fetchTeamDefenseInputs(season: number, week: number): Promise<TeamDefenseInput[]> {
-  const grouped = await loadSeasonTeamDefense(season);
-  return grouped.get(week) ?? [];
+  let grouped: Map<number, TeamDefenseInput[]> | undefined;
+  try {
+    grouped = await loadSeasonTeamDefense(season);
+    const official = grouped.get(week) ?? [];
+    if (official.length > 0) return official;
+    if (grouped) {
+      // eslint-disable-next-line no-console
+      console.info("[nflverse] stats_team defense empty for week, using offense fallback", { season, week });
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[nflverse] Failed to load stats_team defense, using offense fallback", {
+      season,
+      week,
+      error,
+    });
+  }
+
+  try {
+    const approx = await fetchDefenseApprox({ season, week });
+    if (!approx.rows.length) return grouped?.get(week) ?? [];
+    return approx.rows.map((row) => ({
+      season,
+      week: row.week,
+      team: row.team,
+      sacks: row.sacks,
+      interceptions: row.interceptions,
+      fumble_recoveries: row.fumbles_recovered,
+      safeties: 0,
+      defensive_tds: 0,
+      return_tds: 0,
+      points_allowed: row.points_allowed,
+    }));
+  } catch (error) {
+    if (error instanceof DefenseUnavailableError) {
+      return grouped?.get(week) ?? [];
+    }
+    throw error;
+  }
 }
 
 export const computeFantasyPoints = (stat: NflversePlayerStat, format: string): number => {

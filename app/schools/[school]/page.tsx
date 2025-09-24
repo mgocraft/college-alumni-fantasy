@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
+import { useDefenseStatus } from "@/utils/useDefenseStatus";
 type Performer = { name:string; position:string; team?:string; points:number; college?:string|null; meta?:any };
 type SeriesPoint = { week:number; totalPoints:number; performers:Performer[] };
 type Api = { school:string; season:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; series: SeriesPoint[] };
@@ -33,6 +34,13 @@ export default function SchoolDetail({ params }: { params: { school: string } })
   const [defense,setDefense]=useState<'none'|'approx'>(initialDefenseParam === 'none' ? 'none' : 'approx');
   const [startWeek,setStartWeek]=useState(sp.get("startWeek")??"1"); const [endWeek,setEndWeek]=useState(sp.get("endWeek")??"18");
   const [data,setData]=useState<Api|null>(null), [loading,setLoading]=useState(true), [error,setError]=useState<string|null>(null);
+  const parsedSeason = Number.parseInt(season, 10);
+  const parsedEndWeek = Number.parseInt(endWeek, 10);
+  const defenseStatus = useDefenseStatus({
+    season: Number.isFinite(parsedSeason) && parsedSeason > 0 ? parsedSeason : 2025,
+    week: Number.isFinite(parsedEndWeek) && parsedEndWeek > 0 ? parsedEndWeek : undefined,
+    enabled: defense === 'approx',
+  });
   const refresh = async () => {
     const q = new URLSearchParams({ season, startWeek, endWeek, format, mode, includeK: String(includeK), defense }).toString();
     router.replace(`/schools/${schoolSlug}?${q}`);
@@ -86,6 +94,16 @@ export default function SchoolDetail({ params }: { params: { school: string } })
       <label>End Week<input type="number" min={1} max={18} value={endWeek} onChange={e=>setEndWeek(e.target.value)} style={{ marginLeft:8, width:80 }}/></label>
       <button className="btn" onClick={refresh}>Update</button>
     </div>
+    {defense === 'approx' && defenseStatus.message && (
+      <div className="badge" style={{ marginTop: 8, background: '#f97316', color: '#0b1220' }}>
+        Defense stats not posted yet; check back later.
+      </div>
+    )}
+    {defense === 'approx' && !defenseStatus.message && defenseStatus.showApproxBadge && (
+      <div className="badge" style={{ marginTop: 8, background: '#facc15', color: '#0b1220' }}>
+        Approx mode (opponent offense)
+      </div>
+    )}
     <div style={{ width:'100%', height:320, background:'#0b1220', borderRadius:12, padding:12 }}>
       <ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="week"/><YAxis/><Tooltip/><Line type="monotone" dataKey="points" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer>
     </div>
