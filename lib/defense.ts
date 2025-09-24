@@ -104,13 +104,43 @@ export type DefenseApproxResult = {
 };
 
 const KEY_CANDIDATES = {
-  team: ["team", "team_abbr", "posteam", "abbr"] as const,
-  opponent: ["opponent", "opp", "defteam", "opp_abbr"] as const,
-  week: ["week", "game_week", "wk"] as const,
-  pointsFor: ["points_scored", "points", "pts"] as const,
-  sacks: ["sacks", "pass_sacks", "sacks_allowed"] as const,
-  interceptions: ["interceptions", "int", "ints", "pass_interceptions"] as const,
-  fumbles: ["fumbles_lost", "fumbles", "fumlost"] as const,
+  team: [
+    "team",
+    "team_abbr",
+    "posteam",
+    "abbr",
+    "club_code",
+    "team_code",
+    "recent_team",
+  ] as const,
+  opponent: [
+    "opponent",
+    "opp",
+    "defteam",
+    "opp_abbr",
+    "opponent_team",
+    "opponent_team_abbr",
+    "opp_team",
+    "opp_club_code",
+  ] as const,
+  week: ["week", "game_week", "wk", "week_num", "week_number"] as const,
+  pointsFor: ["points_scored", "points", "pts", "points_for", "points_for_total"] as const,
+  sacks: ["sacks", "pass_sacks", "sacks_allowed", "pass_sacks_allowed", "sacks_taken"] as const,
+  interceptions: [
+    "interceptions",
+    "int",
+    "ints",
+    "pass_interceptions",
+    "interceptions_thrown",
+    "pass_interceptions_thrown",
+  ] as const,
+  fumbles: [
+    "fumbles_lost",
+    "fumbles",
+    "fumlost",
+    "fumbles_lost_offense",
+    "fumbles_lost_total",
+  ] as const,
 } as const satisfies Record<string, KeyList>;
 
 async function fetchSeasonCsv(season: number): Promise<string> {
