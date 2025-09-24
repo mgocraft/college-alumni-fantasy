@@ -1350,48 +1350,62 @@ const loadSeasonTeamDefense = async (season: number): Promise<Map<number, TeamDe
   let selected: ReleaseAssetSelection | null = null;
   let rows: CsvRow[] | null = null;
 
-  for (const option of assetOptions) {
-    try {
-      const { buffer } = await fetchAssetBuffer({
-        releaseTag: option.releaseTag,
-        filename: option.filename,
-        url: option.url,
-        season,
-      });
-      if (option.format === "parquet") {
-        rows = await parseParquetBuffer(buffer, `${option.releaseTag}/${option.filename}`);
-      } else {
-        let text: string;
-        if (option.compression === "gz") {
-          try {
-            text = gunzipSync(buffer).toString("utf-8");
-          } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            // eslint-disable-next-line no-console
-            console.error(`[nflverse] Failed to unzip ${option.releaseTag}/${option.filename}`, err);
-            throw createErrorWithCause(
-              `[nflverse] Failed to unzip ${option.releaseTag}/${option.filename}: ${err.message}`,
-              err,
-            );
-          }
-        } else {
-          text = buffer.toString("utf-8");
-        }
-        rows = parseCsvSafe(text, `${option.releaseTag}/${option.filename}`);
-      }
-      selected = option;
-      break;
-    } catch (error) {
-      if (option.format === "parquet" && error instanceof ParquetNotSupportedError) {
-        // eslint-disable-next-line no-console
-        console.warn("[nflverse] Parquet not supported, retrying with fallback", {
-          season,
-          prefix,
+  optionLoop: for (const option of assetOptions) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const { buffer } = await fetchAssetBuffer({
+          releaseTag: option.releaseTag,
           filename: option.filename,
+          url: option.url,
+          season,
         });
-        continue;
+        if (option.format === "parquet") {
+          rows = await parseParquetBuffer(buffer, `${option.releaseTag}/${option.filename}`);
+        } else {
+          let text: string;
+          if (option.compression === "gz") {
+            try {
+              text = gunzipSync(buffer).toString("utf-8");
+            } catch (error) {
+              await deleteCachedBuffer(option.releaseTag, option.filename);
+              if (attempt === 0) {
+                continue;
+              }
+              const err = error instanceof Error ? error : new Error(String(error));
+              // eslint-disable-next-line no-console
+              console.error(`[nflverse] Failed to unzip ${option.releaseTag}/${option.filename}`, err);
+              throw createErrorWithCause(
+                `[nflverse] Failed to unzip ${option.releaseTag}/${option.filename}: ${err.message}`,
+                err,
+              );
+            }
+          } else {
+            text = buffer.toString("utf-8");
+          }
+          try {
+            rows = parseCsvSafe(text, `${option.releaseTag}/${option.filename}`);
+          } catch (error) {
+            await deleteCachedBuffer(option.releaseTag, option.filename);
+            if (attempt === 0) {
+              continue;
+            }
+            throw error;
+          }
+        }
+        selected = option;
+        break optionLoop;
+      } catch (error) {
+        if (option.format === "parquet" && error instanceof ParquetNotSupportedError) {
+          // eslint-disable-next-line no-console
+          console.warn("[nflverse] Parquet not supported, retrying with fallback", {
+            season,
+            prefix,
+            filename: option.filename,
+          });
+          break;
+        }
+        throw error;
       }
-      throw error;
     }
   }
 
