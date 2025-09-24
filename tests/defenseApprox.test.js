@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
 const { loadTsModule } = require('./helpers/loadTsModule');
 
@@ -14,18 +15,27 @@ const SAMPLE_CSV = [
 
 test('fetchDefenseApprox reads modern team columns', async (t) => {
   const originalFetch = global.fetch;
-  global.fetch = async () => ({
-    ok: true,
-    status: 200,
-    text: async () => SAMPLE_CSV,
-  });
+  const requests = [];
+  const buffer = Buffer.from(SAMPLE_CSV, 'utf8');
+  global.fetch = async (url) => {
+    requests.push(url);
+    return {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => buffer,
+      headers: new Map(),
+    };
+  };
   t.after(() => {
     global.fetch = originalFetch;
   });
 
-  const { fetchDefenseApprox } = loadTsModule(modulePath);
+  const { fetchDefenseApprox, DEFENSE_SOURCE } = loadTsModule(modulePath);
   const result = await fetchDefenseApprox({ season: 2025, week: 3 });
 
+  const expectedSource = DEFENSE_SOURCE(2025);
+  assert.equal(result.source, expectedSource);
+  assert.deepEqual(requests, [expectedSource]);
   assert.equal(result.week, 3);
   assert.equal(result.rows.length, 2);
 
@@ -44,4 +54,41 @@ test('fetchDefenseApprox reads modern team columns', async (t) => {
   assert.equal(dal.interceptions, 0);
   assert.equal(dal.fumbles_recovered, 1);
   assert.equal(dal.score, 3);
+});
+
+test('fetchDefenseApprox falls back to gzipped assets', async (t) => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  const plainBuffer = Buffer.from(SAMPLE_CSV, 'utf8');
+  const gzBuffer = zlib.gzipSync(plainBuffer);
+  global.fetch = async (url) => {
+    requests.push(url);
+    if (url.endsWith('.csv')) {
+      return {
+        ok: false,
+        status: 404,
+        headers: new Map(),
+      };
+    }
+    if (url.endsWith('.csv.gz')) {
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => gzBuffer,
+        headers: new Map([["content-type", "application/gzip"]]),
+      };
+    }
+    throw new Error(`Unexpected fetch url ${url}`);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const { fetchDefenseApprox, DEFENSE_SOURCE } = loadTsModule(modulePath);
+  const result = await fetchDefenseApprox({ season: 2025, week: 3 });
+
+  const baseSource = DEFENSE_SOURCE(2025);
+  assert.equal(result.source, `${baseSource}.gz`);
+  assert.deepEqual(requests, [baseSource, `${baseSource}.gz`]);
+  assert.equal(result.rows.length, 2);
 });
