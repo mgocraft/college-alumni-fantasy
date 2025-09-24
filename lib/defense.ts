@@ -1,7 +1,7 @@
 import { gunzipSync } from "node:zlib";
 
 export const DEFENSE_SOURCE = (season: number) =>
-  `https://github.com/nflverse/nflverse-data/releases/download/nflfastR-weekly/stats_team_week_${season}.csv`;
+  `https://github.com/nflverse/nflverse-data/releases/download/stats_team/team_stats_week_${season}.csv`;
 
 export const DEFENSE_SCORING = {
   sack: 1,
@@ -106,29 +106,35 @@ export type DefenseApproxResult = {
 };
 
 const KEY_CANDIDATES = {
-  team: [
-    "team",
-    "team_abbr",
-    "posteam",
-    "abbr",
-    "club_code",
-    "team_code",
-    "recent_team",
-  ] as const,
+  team: ["team", "team_abbr", "posteam", "abbr", "club_code", "team_code", "recent_team"] as const,
   opponent: [
+    "opponent_team",
     "opponent",
     "opp",
     "defteam",
-    "opp_abbr",
-    "opponent_team",
-    "opponent_team_abbr",
     "opp_team",
+    "opp_abbr",
+    "opponent_team_abbr",
     "opp_club_code",
   ] as const,
   week: ["week", "game_week", "wk", "week_num", "week_number"] as const,
-  pointsFor: ["points_scored", "points", "pts", "points_for", "points_for_total"] as const,
-  sacks: ["sacks", "pass_sacks", "sacks_allowed", "pass_sacks_allowed", "sacks_taken"] as const,
+  pointsFor: [
+    "points_scored",
+    "points",
+    "pts",
+    "points_for",
+    "points_for_total",
+  ] as const,
+  sacks: [
+    "sacks_suffered",
+    "sacks",
+    "pass_sacks",
+    "sacks_allowed",
+    "pass_sacks_allowed",
+    "sacks_taken",
+  ] as const,
   interceptions: [
+    "passing_interceptions",
     "interceptions",
     "int",
     "ints",
@@ -142,67 +148,56 @@ const KEY_CANDIDATES = {
     "fumlost",
     "fumbles_lost_offense",
     "fumbles_lost_total",
+    "sack_fumbles_lost",
   ] as const,
 } as const satisfies Record<string, KeyList>;
 
-const GZIP_HEADER = 0x1f;
-const GZIP_HEADER_2 = 0x8b;
+const GZIP_1 = 0x1f;
+const GZIP_2 = 0x8b;
 
-const getHeader = (headers: unknown, name: string): string | undefined => {
-  if (!headers || typeof headers !== "object") return undefined;
-  const candidate = (headers as { get?: (key: string) => unknown }).get;
-  if (typeof candidate !== "function") return undefined;
-  const value = candidate.call(headers, name);
-  if (typeof value === "string") return value;
-  if (value === null || value === undefined) return undefined;
-  return String(value);
+const getHeader = (headers: Headers | undefined, name: string): string | undefined => {
+  if (!headers) return undefined;
+  const v = headers.get(name);
+  return v === null ? undefined : v;
 };
 
-const shouldGunzip = (buffer: Buffer, headers?: unknown): boolean => {
-  const encoding = getHeader(headers, "content-encoding");
-  const contentType = getHeader(headers, "content-type");
-  const check = (value: string | undefined): boolean =>
-    typeof value === "string" && value.toLowerCase().includes("gzip");
-  if (check(encoding) || check(contentType)) return true;
-  return buffer.length >= 2 && buffer[0] === GZIP_HEADER && buffer[1] === GZIP_HEADER_2;
+const bufferLooksGz = (buf: Buffer, headers?: Headers): boolean => {
+  const enc = getHeader(headers, "content-encoding");
+  const ctype = getHeader(headers, "content-type");
+  const hasGzHeader = buf.length >= 2 && buf[0] === GZIP_1 && buf[1] === GZIP_2;
+  const mentionsGz = (s?: string) => !!s && s.toLowerCase().includes("gzip");
+  return hasGzHeader || mentionsGz(enc) || mentionsGz(ctype);
 };
 
-const decodeCsvBuffer = (buffer: Buffer, source: string, headers?: unknown): string => {
-  if (buffer.length === 0) return "";
-  if (!shouldGunzip(buffer, headers)) {
-    return buffer.toString("utf-8");
-  }
+const decodeCsvBuffer = (buf: Buffer, headers: Headers | undefined, source: string): string => {
+  if (buf.length === 0) return "";
+  if (!bufferLooksGz(buf, headers)) return buf.toString("utf-8");
   try {
-    return gunzipSync(buffer).toString("utf-8");
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    throw new Error(`Failed to unzip ${source}: ${err.message}`);
+    return gunzipSync(buf).toString("utf-8");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Failed to unzip ${source}: ${msg}`);
   }
 };
 
 async function fetchSeasonCsv(season: number): Promise<{ text: string; source: string }> {
-  const baseSource = DEFENSE_SOURCE(season);
-  const candidates = [baseSource, `${baseSource}.gz`];
+  const base = DEFENSE_SOURCE(season);
+  const candidates = [base, `${base}.gz`];
   let lastUnavailable: DefenseUnavailableError | undefined;
 
   for (const source of candidates) {
-    const response = await fetch(source, { redirect: "follow", cache: "no-store" });
-    if (response.status === 404) {
+    const res = await fetch(source, { redirect: "follow", cache: "no-store" });
+    if (res.status === 404) {
       lastUnavailable = new DefenseUnavailableError("Team offense stats not available yet", source);
       continue;
     }
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} for ${source}`);
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const text = decodeCsvBuffer(buffer, source, response.headers);
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${source}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const text = decodeCsvBuffer(buf, res.headers, source);
     return { text, source };
   }
 
-  if (lastUnavailable) {
-    throw lastUnavailable;
-  }
-
+  if (lastUnavailable) throw lastUnavailable;
   throw new DefenseUnavailableError("Team offense stats not available yet", candidates[candidates.length - 1]);
 }
 
@@ -227,16 +222,13 @@ export async function fetchDefenseApprox({
     csvText = result.text;
     source = result.source;
   } catch (error) {
-    if (error instanceof DefenseUnavailableError) {
-      throw error;
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(message);
+    if (error instanceof DefenseUnavailableError) throw error;
+    throw new Error(error instanceof Error ? error.message : String(error));
   }
 
   const rows = parseCsv(csvText);
   if (rows.length === 0) {
-    throw new DefenseUnavailableError("stats file empty", source ?? DEFENSE_SOURCE(season));
+    throw new DefenseUnavailableError("stats file empty", source);
   }
 
   const firstRow = rows[0];
@@ -302,7 +294,7 @@ export async function fetchDefenseApprox({
   return {
     season,
     week: selectedWeek ?? 0,
-    source: source ?? DEFENSE_SOURCE(season),
+    source,
     mode: "approx-opponent-offense",
     rows: output,
   };
