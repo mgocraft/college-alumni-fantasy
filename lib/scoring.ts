@@ -5,8 +5,15 @@ import { normalizeTeamAbbreviation, type DefenseWeek } from "./nflverse";
 type Mode = 'weekly' | 'avg';
 type DefenseMode = 'none' | 'approx';
 
-function byPosition(players: Leader[], pos: string) { return players.filter(p => (p.position||'').toUpperCase() === pos.toUpperCase()); }
-function isDefPos(pos?: string) { const p=(pos||'').toUpperCase(); return ['LB','DB','DL','DE','DT','S','CB','OLB','ILB','EDGE','FS','SS','NT','MLB','NB','SAF'].includes(p); }
+const normalizePosition = (pos?: string): string => (pos ?? "").toString().trim().toUpperCase();
+function byPosition(players: Leader[], pos: string) {
+  const target = normalizePosition(pos);
+  return players.filter((player) => normalizePosition(player.position) === target);
+}
+function isDefPos(pos?: string) {
+  const normalized = normalizePosition(pos);
+  return ['LB', 'DB', 'DL', 'DE', 'DT', 'S', 'CB', 'OLB', 'ILB', 'EDGE', 'FS', 'SS', 'NT', 'MLB', 'NB', 'SAF'].includes(normalized);
+}
 function sortBy(points: Record<string, number>) { return (a: Leader, b: Leader) => (points[String(b.player_id)] ?? 0) - (points[String(a.player_id)] ?? 0); }
 function lineupForSchool(players: Leader[], selectorPoints: Record<string, number>, includeK: boolean) {
   const qbs=byPosition(players,'QB').sort(sortBy(selectorPoints)), rbs=byPosition(players,'RB').sort(sortBy(selectorPoints)), wrs=byPosition(players,'WR').sort(sortBy(selectorPoints)), tes=byPosition(players,'TE').sort(sortBy(selectorPoints)), ks=byPosition(players,'K').sort(sortBy(selectorPoints));

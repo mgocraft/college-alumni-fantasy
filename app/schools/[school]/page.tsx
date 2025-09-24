@@ -7,8 +7,26 @@ import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
 type Performer = { name:string; position:string; team?:string; points:number; college?:string|null; meta?:any };
 type SeriesPoint = { week:number; totalPoints:number; performers:Performer[] };
 type Api = { school:string; season:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; series: SeriesPoint[] };
+
+const decodeSchoolParam = (value: string): string => {
+  if (!value) return value;
+  let current = value;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      break;
+    }
+    if (decoded === current) break;
+    current = decoded;
+  }
+  return current;
+};
 export default function SchoolDetail({ params }: { params: { school: string } }) {
   const { school } = params; const sp = useSearchParams(); const router = useRouter();
+  const normalizedSchool = decodeSchoolParam(school);
+  const schoolSlug = encodeURIComponent(normalizedSchool);
   const initialDefenseParam = (sp.get("defense") as 'none'|'approx'|null);
   const [format,setFormat]=useState(sp.get("format")??"ppr"); const [season,setSeason]=useState(sp.get("season")??"2025");
   const [mode,setMode]=useState<"weekly"|"avg">((sp.get("mode") as any)??"weekly"); const [includeK,setIncludeK]=useState(true);
@@ -17,41 +35,43 @@ export default function SchoolDetail({ params }: { params: { school: string } })
   const [data,setData]=useState<Api|null>(null), [loading,setLoading]=useState(true), [error,setError]=useState<string|null>(null);
   const refresh = async () => {
     const q = new URLSearchParams({ season, startWeek, endWeek, format, mode, includeK: String(includeK), defense }).toString();
-    router.replace(`/schools/${encodeURIComponent(school)}?${q}`);
+    router.replace(`/schools/${schoolSlug}?${q}`);
     setLoading(true);
     setError(null);
     try {
-      const response = await fetchJson<Api>(`/api/school/${encodeURIComponent(school)}?${q}`);
+      const response = await fetchJson<Api>(`/api/school/${schoolSlug}?${q}`);
       if (response && typeof response === "object" && "error" in response) {
         const message = typeof (response as { error?: unknown }).error === "string"
           ? String((response as { error?: unknown }).error)
-          : `Unable to load data for ${school}`;
+          : `Unable to load data for ${normalizedSchool}`;
         throw new Error(message);
       }
       setData(response);
     } catch (e) {
-      console.error(`Failed to load school detail for ${school}`, e);
+      console.error(`Failed to load school detail for ${normalizedSchool}`, e);
       setData(null);
-      setError(friendlyErrorMessage(e, `Unable to load data for ${school}`));
+      setError(friendlyErrorMessage(e, `Unable to load data for ${normalizedSchool}`));
     } finally {
       setLoading(false);
     }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(()=>{ void refresh(); }, [school]);
+  useEffect(()=>{ void refresh(); }, [schoolSlug]);
   const chartData = (data?.series??[]).map(p=>({ week: p.week, points: p.totalPoints }));
 
   const renderPerformer = (p: Performer) => {
-    if ((p.position||'').toUpperCase()==='DEF' && p.meta?.contributors) {
+    const normalizedPosition = (p.position ?? "").trim().toUpperCase();
+    if (normalizedPosition==='DEF' && p.meta?.contributors) {
       const tip = p.meta.contributors.map((c:any)=>`${c.label}: ${c.points.toFixed?c.points.toFixed(1):c.points}`).join('\n');
       return (<details style={{cursor:'pointer'}} title={tip}><summary>Defense — {p.points?.toFixed ? p.points.toFixed(1) : p.points} pts</summary>
         <ul>{p.meta.contributors.map((c:any,idx:number)=>(<li key={idx}>{c.label} — {c.points.toFixed?c.points.toFixed(2):c.points}</li>))}</ul>
       </details>);
     }
-    return (<span>{p.name} ({p.position}{p.team?`/${p.team}`:''}){p.college?` — ${p.college}`:''} — {p.points}</span>);
+    const positionLabel = (p.position ?? "").trim();
+    return (<span>{p.name} ({positionLabel}{p.team?`/${p.team}`:''}){p.college?` — ${p.college}`:''} — {p.points}</span>);
   };
 
-  if (loading) return <div className="card"><h2>Loading {school}…</h2></div>;
+  if (loading) return <div className="card"><h2>Loading {normalizedSchool}…</h2></div>;
   if (error) return <div className="card"><h2>Error</h2><pre>{error}</pre></div>;
 
   return (<div className="card">
