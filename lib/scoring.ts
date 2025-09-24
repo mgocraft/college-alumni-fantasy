@@ -1,12 +1,12 @@
 
 import type { Leader, SchoolAggregate } from "./types";
-import type { DefenseWeek } from "./nflverse";
+import { normalizeTeamAbbreviation, type DefenseWeek } from "./nflverse";
 
 type Mode = 'weekly' | 'avg';
 type DefenseMode = 'none' | 'approx';
 
 function byPosition(players: Leader[], pos: string) { return players.filter(p => (p.position||'').toUpperCase() === pos.toUpperCase()); }
-function isDefPos(pos?: string) { const p=(pos||'').toUpperCase(); return ['LB','DB','DL','DE','DT','S','CB','OLB','ILB','EDGE','FS','SS','NT'].includes(p); }
+function isDefPos(pos?: string) { const p=(pos||'').toUpperCase(); return ['LB','DB','DL','DE','DT','S','CB','OLB','ILB','EDGE','FS','SS','NT','MLB','NB','SAF'].includes(p); }
 function sortBy(points: Record<string, number>) { return (a: Leader, b: Leader) => (points[String(b.player_id)] ?? 0) - (points[String(a.player_id)] ?? 0); }
 function lineupForSchool(players: Leader[], selectorPoints: Record<string, number>, includeK: boolean) {
   const qbs=byPosition(players,'QB').sort(sortBy(selectorPoints)), rbs=byPosition(players,'RB').sort(sortBy(selectorPoints)), wrs=byPosition(players,'WR').sort(sortBy(selectorPoints)), tes=byPosition(players,'TE').sort(sortBy(selectorPoints)), ks=byPosition(players,'K').sort(sortBy(selectorPoints));
@@ -69,7 +69,16 @@ export async function aggregateByCollegeMode(
 
   const defenseData = opts.defense === 'approx' ? (opts.defenseData ?? null) : null;
   const teamDefense: Record<string, { dstPoints:number; totalSnaps:number; snapsById:Record<string,number> }> = {};
-  if (defenseData) for (const t of defenseData.teams) { const total=t.players.reduce((s:any,p:any)=>s+(p.snaps||0),0); const map:Record<string,number>={}; for (const p of t.players) map[String(p.player_id)] = p.snaps||0; teamDefense[t.team.toUpperCase()] = { dstPoints: t.dstPoints||0, totalSnaps: total, snapsById: map }; }
+  if (defenseData) {
+    for (const entry of defenseData.teams) {
+      const teamKey = normalizeTeamAbbreviation(entry.team);
+      if (!teamKey) continue;
+      const total = entry.players.reduce((sum, player) => sum + (player.snaps || 0), 0);
+      const map: Record<string, number> = {};
+      for (const player of entry.players) map[String(player.player_id)] = player.snaps || 0;
+      teamDefense[teamKey] = { dstPoints: entry.dstPoints || 0, totalSnaps: total, snapsById: map };
+    }
+  }
 
   const results: SchoolAggregate[] = [];
   for (const [school, players] of groups) {
@@ -80,7 +89,9 @@ export async function aggregateByCollegeMode(
       const defs = players.filter(p => isDefPos(p.position));
       const credits: { player: Leader; credit: number }[] = [];
       for (const p of defs) {
-        const team=(p.team||'').toUpperCase(); const t=teamDefense[team]; if (!t || t.totalSnaps<=0) continue;
+        const team = normalizeTeamAbbreviation(p.team);
+        if (!team) continue;
+        const t = teamDefense[team]; if (!t || t.totalSnaps<=0) continue;
         const snaps=t.snapsById[String(p.player_id)] ?? 0; const share=snaps/t.totalSnaps; const credit=t.dstPoints*share; if (credit>0) credits.push({ player: p, credit });
       }
       credits.sort((a,b)=>b.credit-a.credit); const top11=credits.slice(0,11); const defPoints = Number(top11.reduce((s,c)=>s+c.credit,0).toFixed(2));

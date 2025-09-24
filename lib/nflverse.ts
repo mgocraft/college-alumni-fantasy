@@ -32,6 +32,80 @@ const RELEASE_BASE = "https://github.com/nflverse/nflverse-data/releases/downloa
 const DEFAULT_USER_AGENT = "college-alumni-fantasy/1.0 (+https://github.com/)";
 const CACHE_SECONDS = Number(process.env.CACHE_SECONDS ?? 3600);
 const CACHE_MS = CACHE_SECONDS > 0 ? CACHE_SECONDS * 1000 : 0;
+
+const TEAM_CODE_ALIASES: Record<string, string> = {
+  ARI: "ARI",
+  ARZ: "ARI",
+  PHX: "ARI",
+  ATL: "ATL",
+  BAL: "BAL",
+  BLT: "BAL",
+  BUF: "BUF",
+  CAR: "CAR",
+  CHI: "CHI",
+  CIN: "CIN",
+  CLE: "CLE",
+  CLV: "CLE",
+  DAL: "DAL",
+  DEN: "DEN",
+  DET: "DET",
+  GB: "GB",
+  GBP: "GB",
+  GNB: "GB",
+  HOU: "HOU",
+  HST: "HOU",
+  HTX: "HOU",
+  IND: "IND",
+  CLT: "IND",
+  JAC: "JAX",
+  JAX: "JAX",
+  KAN: "KC",
+  KCC: "KC",
+  KC: "KC",
+  LAC: "LAC",
+  SD: "LAC",
+  SDC: "LAC",
+  SDG: "LAC",
+  LAR: "LAR",
+  LA: "LAR",
+  RAM: "LAR",
+  STL: "LAR",
+  LV: "LV",
+  LVR: "LV",
+  OAK: "LV",
+  MIA: "MIA",
+  MIN: "MIN",
+  NE: "NE",
+  NEW: "NE",
+  NWE: "NE",
+  NO: "NO",
+  NOL: "NO",
+  NOR: "NO",
+  NYG: "NYG",
+  NYJ: "NYJ",
+  PHI: "PHI",
+  PHL: "PHI",
+  PIT: "PIT",
+  SEA: "SEA",
+  SF: "SF",
+  SFO: "SF",
+  TB: "TB",
+  TBB: "TB",
+  TAM: "TB",
+  TEN: "TEN",
+  HTN: "TEN",
+  OIL: "TEN",
+  WAS: "WAS",
+  WFT: "WAS",
+  WSH: "WAS",
+};
+
+export const normalizeTeamAbbreviation = (input: string | null | undefined): string => {
+  if (input === null || input === undefined) return "";
+  const trimmed = String(input).trim().toUpperCase();
+  if (!trimmed) return "";
+  return TEAM_CODE_ALIASES[trimmed] ?? trimmed;
+};
 const resolveCacheRoot = (): string => {
   const configured = process.env.NFLVERSE_CACHE_DIR?.trim();
   if (configured) {
@@ -1011,10 +1085,9 @@ const resolveName = (row: CsvRow): string => {
   return `${first} ${last}`.trim();
 };
 
-const resolveTeam = (row: CsvRow): string => {
-  const team = toString(row.recent_team || row.team || row.posteam || row.team_abbr || row.club_code || row.team_code);
-  return team.toUpperCase();
-};
+const resolveTeam = (row: CsvRow): string => normalizeTeamAbbreviation(
+  toString(row.recent_team || row.team || row.posteam || row.team_abbr || row.club_code || row.team_code),
+);
 
 const resolvePosition = (row: CsvRow): string => toString(row.position || row.pos || row.depth_chart_position);
 
@@ -1369,7 +1442,7 @@ export const computeDstPoints = (input: TeamDefenseInput): number => {
 const buildDefenseWeek = (snaps: DefSnapRow[], teams: TeamDefenseInput[]): DefenseWeek => {
   const snapMap = new Map<string, Map<string, number>>();
   for (const snap of snaps) {
-    const team = (snap.team || "").toUpperCase();
+    const team = normalizeTeamAbbreviation(snap.team);
     if (!team || !snap.player_id) continue;
     if (!snapMap.has(team)) snapMap.set(team, new Map());
     const playerMap = snapMap.get(team)!;
@@ -1378,19 +1451,22 @@ const buildDefenseWeek = (snaps: DefSnapRow[], teams: TeamDefenseInput[]): Defen
   }
   const dstMap = new Map<string, number>();
   for (const teamInput of teams) {
-    const team = (teamInput.team || "").toUpperCase();
+    const team = normalizeTeamAbbreviation(teamInput.team);
+    if (!team) continue;
     dstMap.set(team, computeDstPoints(teamInput));
   }
   const teamsSet = new Set<string>([...snapMap.keys(), ...dstMap.keys()]);
   const resultTeams: DefenseWeek["teams"] = [];
   for (const team of teamsSet) {
-    const playerMap = snapMap.get(team) ?? new Map();
+    const normalizedTeam = normalizeTeamAbbreviation(team);
+    if (!normalizedTeam) continue;
+    const playerMap = snapMap.get(normalizedTeam) ?? new Map();
     const players = Array.from(playerMap.entries())
       .filter(([, snaps]) => snaps > 0)
       .map(([player_id, snaps]) => ({ player_id, snaps }));
     resultTeams.push({
-      team,
-      dstPoints: Number((dstMap.get(team) ?? 0).toFixed(2)),
+      team: normalizedTeam,
+      dstPoints: Number((dstMap.get(normalizedTeam) ?? 0).toFixed(2)),
       players,
     });
   }
@@ -1413,7 +1489,8 @@ const ensureDefenseLeaders = (
       playersData.lookup,
     );
     const rawTeam = (snap.team || (playerRow?.team as string) || (playerRow?.recent_team as string) || "").toString().trim();
-    const team = rawTeam ? rawTeam.toUpperCase() : undefined;
+    const normalizedTeam = normalizeTeamAbbreviation(rawTeam);
+    const team = normalizedTeam || undefined;
     const resolvedName =
       (typeof playerRow?.full_name === "string" && playerRow.full_name.trim()) ? playerRow.full_name :
       (typeof playerRow?.player_name === "string" && playerRow.player_name.trim()) ? playerRow.player_name :
@@ -1502,7 +1579,8 @@ export async function loadWeek(options: LoadWeekOptions): Promise<LoadWeekResult
       (typeof playerRow?.team === "string" && playerRow.team.trim()) ? playerRow.team :
       (typeof playerRow?.recent_team === "string" && playerRow.recent_team.trim()) ? playerRow.recent_team :
       "";
-    const team = teamRaw ? teamRaw.toUpperCase() : undefined;
+    const normalizedTeam = normalizeTeamAbbreviation(teamRaw);
+    const team = normalizedTeam || undefined;
     const positionSource =
       (stat.position && stat.position.trim()) ? stat.position :
       (typeof playerRow?.position === "string" && playerRow.position.trim()) ? playerRow.position :
