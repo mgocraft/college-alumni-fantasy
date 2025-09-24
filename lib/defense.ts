@@ -3,6 +3,13 @@ import { gunzipSync } from "node:zlib";
 export const DEFENSE_SOURCE = (season: number) =>
   `https://github.com/nflverse/nflverse-data/releases/download/stats_team/team_stats_week_${season}.csv`;
 
+const TEAM_STATS_CANDIDATES = (season: number) => [
+  `https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${season}.csv`,
+  `https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${season}.csv.gz`,
+  `https://github.com/nflverse/nflverse-data/releases/download/stats_team/team_stats_week_${season}.csv`,
+  `https://github.com/nflverse/nflverse-data/releases/download/stats_team/team_stats_week_${season}.csv.gz`,
+];
+
 export const DEFENSE_SCORING = {
   sack: 1,
   interception: 2,
@@ -181,19 +188,16 @@ const decodeCsvBuffer = (buf: Buffer, headers: Headers | undefined, source: stri
 };
 
 async function fetchSeasonCsv(season: number): Promise<{ text: string; source: string }> {
-  const base = DEFENSE_SOURCE(season);
-  const candidates = [base, `${base}.gz`];
+  const candidates = TEAM_STATS_CANDIDATES(season);
   let lastUnavailable: DefenseUnavailableError | undefined;
 
   for (const source of candidates) {
     const res = await fetch(source, { redirect: "follow", cache: "no-store" });
-    if (res.status === 404) {
-      lastUnavailable = new DefenseUnavailableError("Team offense stats not available yet", source);
-      continue;
-    }
+    if (res.status === 404) { lastUnavailable = new DefenseUnavailableError("Team stats file not found", source); continue; }
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${source}`);
     const buf = Buffer.from(await res.arrayBuffer());
-    const text = decodeCsvBuffer(buf, res.headers, source);
+    const text = decodeCsvBuffer(buf, res.headers as Headers, source);
+    console.log("[def] using", source);
     return { text, source };
   }
 
