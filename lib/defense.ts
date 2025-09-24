@@ -1,3 +1,5 @@
+import { gunzipSync } from "node:zlib";
+
 export const DEFENSE_SOURCE = (season: number) =>
   `https://github.com/nflverse/nflverse-data/releases/download/nflfastR-weekly/stats_team_week_${season}.csv`;
 
@@ -143,16 +145,65 @@ const KEY_CANDIDATES = {
   ] as const,
 } as const satisfies Record<string, KeyList>;
 
-async function fetchSeasonCsv(season: number): Promise<string> {
-  const source = DEFENSE_SOURCE(season);
-  const response = await fetch(source, { redirect: "follow", cache: "no-store" });
-  if (response.status === 404) {
-    throw new DefenseUnavailableError("Team offense stats not available yet", source);
+const GZIP_HEADER = 0x1f;
+const GZIP_HEADER_2 = 0x8b;
+
+const getHeader = (headers: unknown, name: string): string | undefined => {
+  if (!headers || typeof headers !== "object") return undefined;
+  const candidate = (headers as { get?: (key: string) => unknown }).get;
+  if (typeof candidate !== "function") return undefined;
+  const value = candidate.call(headers, name);
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return undefined;
+  return String(value);
+};
+
+const shouldGunzip = (buffer: Buffer, headers?: unknown): boolean => {
+  const encoding = getHeader(headers, "content-encoding");
+  const contentType = getHeader(headers, "content-type");
+  const check = (value: string | undefined): boolean =>
+    typeof value === "string" && value.toLowerCase().includes("gzip");
+  if (check(encoding) || check(contentType)) return true;
+  return buffer.length >= 2 && buffer[0] === GZIP_HEADER && buffer[1] === GZIP_HEADER_2;
+};
+
+const decodeCsvBuffer = (buffer: Buffer, source: string, headers?: unknown): string => {
+  if (buffer.length === 0) return "";
+  if (!shouldGunzip(buffer, headers)) {
+    return buffer.toString("utf-8");
   }
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${source}`);
+  try {
+    return gunzipSync(buffer).toString("utf-8");
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    throw new Error(`Failed to unzip ${source}: ${err.message}`);
   }
-  return response.text();
+};
+
+async function fetchSeasonCsv(season: number): Promise<{ text: string; source: string }> {
+  const baseSource = DEFENSE_SOURCE(season);
+  const candidates = [baseSource, `${baseSource}.gz`];
+  let lastUnavailable: DefenseUnavailableError | undefined;
+
+  for (const source of candidates) {
+    const response = await fetch(source, { redirect: "follow", cache: "no-store" });
+    if (response.status === 404) {
+      lastUnavailable = new DefenseUnavailableError("Team offense stats not available yet", source);
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} for ${source}`);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const text = decodeCsvBuffer(buffer, source, response.headers);
+    return { text, source };
+  }
+
+  if (lastUnavailable) {
+    throw lastUnavailable;
+  }
+
+  throw new DefenseUnavailableError("Team offense stats not available yet", candidates[candidates.length - 1]);
 }
 
 const toWeekNumber = (value: unknown): number | undefined => {
@@ -170,8 +221,11 @@ export async function fetchDefenseApprox({
   week?: number;
 }): Promise<DefenseApproxResult> {
   let csvText: string;
+  let source: string;
   try {
-    csvText = await fetchSeasonCsv(season);
+    const result = await fetchSeasonCsv(season);
+    csvText = result.text;
+    source = result.source;
   } catch (error) {
     if (error instanceof DefenseUnavailableError) {
       throw error;
@@ -182,7 +236,7 @@ export async function fetchDefenseApprox({
 
   const rows = parseCsv(csvText);
   if (rows.length === 0) {
-    throw new DefenseUnavailableError("stats file empty", DEFENSE_SOURCE(season));
+    throw new DefenseUnavailableError("stats file empty", source ?? DEFENSE_SOURCE(season));
   }
 
   const firstRow = rows[0];
@@ -248,7 +302,7 @@ export async function fetchDefenseApprox({
   return {
     season,
     week: selectedWeek ?? 0,
-    source: DEFENSE_SOURCE(season),
+    source: source ?? DEFENSE_SOURCE(season),
     mode: "approx-opponent-offense",
     rows: output,
   };
