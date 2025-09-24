@@ -30,10 +30,10 @@ test('fetchDefenseApprox reads modern team columns', async (t) => {
     global.fetch = originalFetch;
   });
 
-  const { fetchDefenseApprox, DEFENSE_SOURCE } = loadTsModule(modulePath);
+  const { fetchDefenseApprox } = loadTsModule(modulePath);
   const result = await fetchDefenseApprox({ season: 2025, week: 3 });
 
-  const expectedSource = DEFENSE_SOURCE(2025);
+  const expectedSource = 'https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_2025.csv';
   assert.equal(result.source, expectedSource);
   assert.deepEqual(requests, [expectedSource]);
   assert.equal(result.week, 3);
@@ -84,11 +84,11 @@ test('fetchDefenseApprox falls back to gzipped assets', async (t) => {
     global.fetch = originalFetch;
   });
 
-  const { fetchDefenseApprox, DEFENSE_SOURCE } = loadTsModule(modulePath);
+  const { fetchDefenseApprox } = loadTsModule(modulePath);
   const result = await fetchDefenseApprox({ season: 2025, week: 3 });
 
-  const baseSource = DEFENSE_SOURCE(2025);
-  assert.equal(result.source, `${baseSource}.gz`);
-  assert.deepEqual(requests, [baseSource, `${baseSource}.gz`]);
+  const primarySource = 'https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_2025.csv';
+  assert.equal(result.source, `${primarySource}.gz`);
+  assert.deepEqual(requests, [primarySource, `${primarySource}.gz`]);
   assert.equal(result.rows.length, 2);
 });
