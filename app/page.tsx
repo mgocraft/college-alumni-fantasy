@@ -44,8 +44,14 @@ export default async function HomePage() {
     const defense = await fetchDefenseApprox({ season: DEFAULT_SEASON });
     if (defense.rows.length === 0) {
       defenseBanner = "Defense stats not posted yet; check back later.";
-    } else if (defense.rows.every((row) => Number(row.score) === 0)) {
-      showApproxBadge = true;
+    } else {
+      showApproxBadge = defense.mode === "approx-opponent-offense";
+      if (defense.rows.every((row) => Number(row.score) === 0)) {
+        console.warn("[home] Defense approx returned zero scores", {
+          season: DEFAULT_SEASON,
+          week: defense.week,
+        });
+      }
     }
   } catch (err) {
     if (err instanceof DefenseUnavailableError) {
