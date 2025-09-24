@@ -110,6 +110,9 @@ export type DefenseApproxResult = {
   source: string;
   mode: "approx-opponent-offense";
   rows: DefenseApproxRow[];
+  weeks_available?: number[];
+  requested_week?: number | null;
+  fallback_reason?: string | null;
 };
 
 const KEY_CANDIDATES = {
@@ -255,9 +258,26 @@ export async function fetchDefenseApprox({
 
   const weekCandidates = Array.from(weekGroups.keys()).sort((a, b) => a - b);
   const requestedWeek = typeof week === "number" && Number.isFinite(week) && week > 0 ? Math.trunc(week) : undefined;
-  const selectedWeek = requestedWeek ?? weekCandidates[weekCandidates.length - 1];
+  const weekSet = new Set(weekCandidates);
+  let selectedWeek: number | undefined = undefined;
+  let fallbackReason: string | null = null;
 
-  const subset = selectedWeek ? weekGroups.get(selectedWeek) ?? [] : [];
+  if (requestedWeek !== undefined) {
+    if (weekSet.has(requestedWeek)) {
+      selectedWeek = requestedWeek;
+    } else if (weekCandidates.length) {
+      selectedWeek = weekCandidates[weekCandidates.length - 1];
+      fallbackReason = "requested_week_unavailable_fallback_to_latest";
+    }
+  } else if (weekCandidates.length) {
+    selectedWeek = weekCandidates[weekCandidates.length - 1];
+  }
+
+  if (selectedWeek === undefined) {
+    throw new DefenseUnavailableError("no weeks available in team stats", source);
+  }
+
+  const subset = weekGroups.get(selectedWeek) ?? [];
   const offenseByTeam = new Map<string, CsvRow>();
   for (const row of subset) {
     const team = normalizeTeam(teamKey ? row[teamKey] : undefined);
@@ -286,7 +306,7 @@ export async function fetchDefenseApprox({
 
     output.push({
       team,
-      week: selectedWeek ?? 0,
+      week: selectedWeek,
       points_allowed: pointsAllowed,
       sacks,
       interceptions,
@@ -297,9 +317,12 @@ export async function fetchDefenseApprox({
 
   return {
     season,
-    week: selectedWeek ?? 0,
+    week: selectedWeek,
     source,
     mode: "approx-opponent-offense",
     rows: output,
+    weeks_available: weekCandidates,
+    requested_week: requestedWeek ?? null,
+    fallback_reason: fallbackReason,
   };
 }
