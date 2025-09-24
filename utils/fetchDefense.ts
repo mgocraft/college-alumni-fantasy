@@ -78,7 +78,13 @@ export async function fetchDefense(season = 2025, week?: number): Promise<Defens
   let json = await load(requestedWeek);
   let weeksAvailable = toWeekList(json?.weeks_available);
 
-  if ((Array.isArray(json?.rows) ? json.rows.length : 0) === 0 && weeksAvailable.length) {
+
+  if (
+    requestedWeek === undefined &&
+    (Array.isArray(json?.rows) ? json.rows.length : 0) === 0 &&
+    weeksAvailable.length
+  ) {
+
     const latest = weeksAvailable[weeksAvailable.length - 1];
     if (latest && latest !== (requestedWeek ?? 0)) {
       json = await load(latest);
