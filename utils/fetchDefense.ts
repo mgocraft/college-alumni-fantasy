@@ -23,6 +23,25 @@ const toWeek = (value: unknown): number => {
   return Math.trunc(parsed);
 };
 
+const toOptionalWeek = (value: unknown): number | undefined => {
+  const wk = toWeek(value);
+  return wk > 0 ? wk : undefined;
+};
+
+const toWeekList = (value: unknown): number[] => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  const result: number[] = [];
+  for (const entry of value) {
+    const wk = toWeek(entry);
+    if (wk > 0 && !seen.has(wk)) {
+      seen.add(wk);
+      result.push(wk);
+    }
+  }
+  return result.sort((a, b) => a - b);
+};
+
 export type DefenseRow = {
   team: string;
   week: number;
@@ -39,18 +58,37 @@ export type DefenseApiResponse = {
   mode?: string;
   source?: string;
   rows: DefenseRow[];
+  weeks_available?: number[];
+  requested_week?: number | null;
+  fallback_reason?: string | null;
 };
 
 export async function fetchDefense(season = 2025, week?: number): Promise<DefenseApiResponse> {
-  const qs = new URLSearchParams({ season: String(season) });
-  if (week != null) qs.set("week", String(week));
-  const r = await fetch(`/api/defense?${qs.toString()}`, { cache: "no-store" });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j?.error || r.statusText);
+  const requestedWeek = toOptionalWeek(week);
 
-  const responseWeek = toWeek(j?.week ?? week);
-  const rows = Array.isArray(j?.rows)
-    ? (j.rows as Record<string, unknown>[])
+  const load = async (targetWeek?: number) => {
+    const qs = new URLSearchParams({ season: String(season) });
+    if (targetWeek != null) qs.set("week", String(targetWeek));
+    const res = await fetch(`/api/defense?${qs.toString()}`, { cache: "no-store" });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json?.error || res.statusText);
+    return json as Record<string, unknown>;
+  };
+
+  let json = await load(requestedWeek);
+  let weeksAvailable = toWeekList(json?.weeks_available);
+
+  if ((Array.isArray(json?.rows) ? json.rows.length : 0) === 0 && weeksAvailable.length) {
+    const latest = weeksAvailable[weeksAvailable.length - 1];
+    if (latest && latest !== (requestedWeek ?? 0)) {
+      json = await load(latest);
+      weeksAvailable = toWeekList(json?.weeks_available ?? weeksAvailable);
+    }
+  }
+
+  const responseWeek = toWeek(json?.week ?? requestedWeek);
+  const rows = Array.isArray(json?.rows)
+    ? (json.rows as Record<string, unknown>[])
         .map((row) => ({
           team: normalizeTeam(row.team),
           week: toWeek(row.week ?? responseWeek),
@@ -64,11 +102,17 @@ export async function fetchDefense(season = 2025, week?: number): Promise<Defens
     : [];
 
   const payload: DefenseApiResponse = {
-    season: toWeek(j?.season) || season,
+    season: toWeek(json?.season) || season,
     week: responseWeek,
-    mode: typeof j?.mode === "string" ? j.mode : undefined,
-    source: typeof j?.source === "string" ? j.source : undefined,
+    mode: typeof json?.mode === "string" ? (json.mode as string) : undefined,
+    source: typeof json?.source === "string" ? (json.source as string) : undefined,
     rows,
+    weeks_available: weeksAvailable.length ? weeksAvailable : undefined,
+    requested_week:
+      json?.requested_week === null
+        ? null
+        : toOptionalWeek(json?.requested_week ?? requestedWeek ?? null) ?? (requestedWeek ?? null),
+    fallback_reason: typeof json?.fallback_reason === "string" ? (json.fallback_reason as string) : null,
   };
 
   console.log("[alumni] DEF", {
@@ -76,6 +120,8 @@ export async function fetchDefense(season = 2025, week?: number): Promise<Defens
     week: payload.week,
     mode: payload.mode,
     rows: payload.rows.length,
+    fallback: payload.fallback_reason,
+    requested: payload.requested_week,
   });
 
   return payload;
