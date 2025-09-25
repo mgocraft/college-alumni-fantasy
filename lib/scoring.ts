@@ -12,7 +12,7 @@ function byPosition(players: Leader[], pos: string) {
 }
 function isDefPos(pos?: string) {
   const normalized = normalizePosition(pos);
-  return ['LB', 'DB', 'DL', 'DE', 'DT', 'S', 'CB', 'OLB', 'ILB', 'EDGE', 'FS', 'SS', 'NT', 'MLB', 'NB', 'SAF'].includes(normalized);
+  return ['LB', 'DB', 'DL', 'DE', 'DT', 'S', 'CB', 'OLB', 'ILB', 'EDGE', 'FS', 'SS', 'NT', 'MLB', 'NB', 'SAF', 'DEF'].includes(normalized);
 }
 function sortBy(points: Record<string, number>) { return (a: Leader, b: Leader) => (points[String(b.player_id)] ?? 0) - (points[String(a.player_id)] ?? 0); }
 function lineupForSchool(players: Leader[], selectorPoints: Record<string, number>, includeK: boolean) {
