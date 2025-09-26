@@ -1,4 +1,5 @@
 const REGULAR_SEASON_WEEKS = 18;
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
 const toUtcDate = (year: number, monthIndex: number, day: number, hours = 0): Date => {
   const date = new Date(Date.UTC(year, monthIndex, day, hours, 0, 0, 0));
@@ -52,5 +53,16 @@ export function lastCompletedNflWeek(now: Date = new Date()): LastCompletedWeek 
   const weeksSince = Math.floor(msSinceCutoff / (7 * 24 * 60 * 60 * 1000)) + 1;
   const week = clampWeek(weeksSince);
   return { season, week };
+}
+
+export function nflWeekWindowUtc(
+  season: number,
+  week: number,
+): { startISO: string; endISO: string } {
+  const clampedWeek = clampWeek(week);
+  const cutoff = weekOneTuesdayCutoff(season);
+  const end = new Date(cutoff.getTime() + (clampedWeek - 1) * MS_PER_WEEK);
+  const start = new Date(end.getTime() - MS_PER_WEEK);
+  return { startISO: start.toISOString(), endISO: end.toISOString() };
 }
 
