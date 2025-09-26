@@ -90,7 +90,7 @@ export async function getCfbTeamSeasonGames(season: number, team: string): Promi
   const games: CfbGame[] = [];
   for (const seasonType of seasonTypes) {
     try {
-      const fetched = await fetchTeamGames(season, team, seasonType);
+      const fetched = await fetchTeamGames(season, normalizedTeam, seasonType);
       for (const game of fetched) {
         if (game.home === normalizedTeam || game.away === normalizedTeam) {
           games.push(game);
