@@ -1,5 +1,5 @@
 import { kvGet, kvSet } from "@/lib/kv";
-import { normalizeSchool } from "./datasources";
+import { normalizeSchool as normalizeSchoolBase } from "./datasources";
 
 export type CfbGame = {
   season: number;
@@ -18,6 +18,34 @@ const SEASON_SLATE_CACHE_TTL_SECONDS = 60 * 60 * 24;
 
 const buildSlateCacheKey = (season: number, seasonType: SeasonType) =>
   `cfbd:slate:${season}:${seasonType}`;
+
+const SYN: Record<string, string> = {
+  // high-risk aliases
+  "Ohio State": "Ohio State",
+  "Ohio St": "Ohio State",
+  "Ohio St.": "Ohio State",
+  "The Ohio State": "Ohio State",
+  "Ohio State Buckeyes": "Ohio State",
+  // keep your other mappings
+  "Miami": "Miami (FL)",
+  "Texas A&M": "Texas A&M",
+  "Ole Miss": "Ole Miss",
+};
+
+export function normalizeSchool(n?: string) {
+  if (!n) return "";
+  const x = n.replace(/\u2013|\u2014/g, "-").replace(/\s+/g, " ").trim();
+  const mapped = SYN[x] ?? x;
+  return normalizeSchoolBase(mapped);
+}
+
+function eqLoose(a: string, b: string) {
+  const A = normalizeSchool(a).toLowerCase();
+  const B = normalizeSchool(b).toLowerCase();
+  if (A === B) return true;
+  // extra tolerance: “ohio st” vs “ohio state”
+  return A.replace(/\bst\b/g, "state") === B.replace(/\bst\b/g, "state");
+}
 
 type RawCfbGame = {
   week?: number;
@@ -117,11 +145,24 @@ export async function getCfbSeasonSlate(
   return sorted;
 }
 
-export function filterTeamGames(slate: CfbGame[], team: string): CfbGame[] {
-  const normalizedTeam = normalizeSchool(team);
-  if (!normalizedTeam) return [];
-  const matches = slate.filter((game) => game.home === normalizedTeam || game.away === normalizedTeam);
-  return matches.sort(sortGames);
+export function filterTeamGames(slate: CfbGame[], rawTeam: string): CfbGame[] {
+  const team = normalizeSchool(rawTeam);
+  if (!team) return [];
+  // 1) strict normalized match
+  let out = slate.filter((game) => eqLoose(game.home, team) || eqLoose(game.away, team));
+  if (out.length) {
+    const sorted = [...out];
+    sorted.sort(sortGames);
+    return sorted;
+  }
+  // 2) fallback: substring fuzzy (case-insensitive) to catch odd labels
+  const needle = team.toLowerCase();
+  out = slate.filter(
+    (game) => game.home.toLowerCase().includes(needle) || game.away.toLowerCase().includes(needle),
+  );
+  const sorted = [...out];
+  sorted.sort(sortGames);
+  return sorted;
 }
 
 export async function getCfbTeamSeasonGames(season: number, team: string): Promise<CfbGame[]> {
@@ -131,10 +172,9 @@ export async function getCfbTeamSeasonGames(season: number, team: string): Promi
   for (const seasonType of seasonTypes) {
     try {
       const slate = await getCfbSeasonSlate(season, seasonType);
-      for (const game of slate) {
-        if (game.home === normalizedTeam || game.away === normalizedTeam) {
-          games.push(game);
-        }
+      const matches = filterTeamGames(slate, normalizedTeam);
+      for (const game of matches) {
+        games.push(game);
       }
     } catch (error) {
       if (seasonType === "regular") throw error;

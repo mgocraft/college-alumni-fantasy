@@ -21,7 +21,20 @@ type GameResultRow = {
   nflWindowStart: string;
   nflWindowEnd: string;
 };
-type GameResultsResponse = { team: string; season: number; rows: GameResultRow[]; cached?: boolean };
+type GameResultsMeta = {
+  requestedTeam?: string;
+  team?: string;
+  slateCount?: number;
+  matched?: number;
+  sample?: unknown;
+  slateBreakdown?: {
+    regular: number;
+    postseason: number;
+  };
+  firstGames?: unknown;
+  slateErrors?: Record<string, string> | undefined;
+};
+type GameResultsResponse = { team: string; season: number; rows: GameResultRow[]; cached?: boolean; meta?: GameResultsMeta };
 type PendingGameResults = { status: "pending"; message: string; season: number; week: number };
 
 const decodeSchoolParam = (value: string): string => {
@@ -145,7 +158,12 @@ export default function SchoolDetail({ params }: { params: { school: string } })
       </p>
     );
   } else if (!sortedGameResults.length) {
-    gameResultsBody = <p>No matchup results yet for {gameResultsSeasonLabel}.</p>;
+    const missingTeam = gameResults?.team ?? normalizedSchool;
+    gameResultsBody = (
+      <p style={{ marginTop: 12, fontSize: '0.9rem', color: '#94a3b8' }}>
+        No games found for “{missingTeam}”. Try “Ohio State” (not OSU), or refresh—schedule names can vary.
+      </p>
+    );
   } else {
     gameResultsBody = (
       <>

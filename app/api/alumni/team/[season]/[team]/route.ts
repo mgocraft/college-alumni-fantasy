@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { kvGet, kvSet } from "@/lib/kv";
-import { type CfbGame, filterTeamGames, getCfbSeasonSlate } from "@/utils/schedules";
+import { type CfbGame, filterTeamGames, getCfbSeasonSlate, normalizeSchool } from "@/utils/schedules";
 import {
   getWeeklyStats,
   getRosterWithColleges,
   joinStatsToColleges,
   StatsNotAvailableError,
-  normalizeSchool,
 } from "@/utils/datasources";
 import { lastCompletedNflWeek, nflWeekWindowUtc } from "@/utils/nflWeek";
 import type { PlayerWeekly } from "@/utils/compute";
@@ -80,9 +79,6 @@ export async function GET(
 
   const cacheKey = buildCacheKey(season, normalizedTeam);
   const cached = await kvGet<ResultRow[]>(cacheKey);
-  if (cached && cached.length && !debug) {
-    return NextResponse.json({ team: normalizedTeam, season, rows: cached, cached: true }, { headers: buildHeaders() });
-  }
 
   try {
     const slateErrors: Record<string, string> = {};
@@ -104,12 +100,23 @@ export async function GET(
 
     const slate = [...regularSlate, ...postseasonSlate];
     const games = filterTeamGames(slate, rawTeam || normalizedTeam);
+    const sample = debug
+      ? slate
+          .filter((g) => /ohio/i.test(g.home) || /ohio/i.test(g.away))
+          .slice(0, 5)
+      : undefined;
+
+    const metaBase = {
+      requestedTeam: rawTeam,
+      team: normalizedTeam,
+      slateCount: slate.length,
+      matched: games.length,
+      sample,
+    };
 
     const meta = debug
       ? {
-          requestedTeam: rawTeam,
-          team: normalizedTeam,
-          slateCount: slate.length,
+          ...metaBase,
           slateBreakdown: {
             regular: regularSlate.length,
             postseason: postseasonSlate.length,
@@ -117,19 +124,16 @@ export async function GET(
           firstGames: games.slice(0, 3),
           slateErrors: Object.keys(slateErrors).length ? slateErrors : undefined,
         }
-      : undefined;
+      : metaBase;
 
     if (!games.length) {
       if (cached && cached.length) {
-        return NextResponse.json(
-          { team: normalizedTeam, season, rows: cached, cached: true, meta },
-          { headers: buildHeaders() },
-        );
+        return NextResponse.json({ team: normalizedTeam, season, rows: cached, cached: true, meta }, { headers: buildHeaders() });
       }
       return NextResponse.json({ team: normalizedTeam, season, rows: [], meta }, { headers: buildHeaders() });
     }
 
-    if (cached && cached.length && debug) {
+    if (cached && cached.length) {
       return NextResponse.json(
         { team: normalizedTeam, season, rows: cached, cached: true, meta },
         { headers: buildHeaders() },
