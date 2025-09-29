@@ -3,10 +3,11 @@ import { kvGet, kvSet } from "@/lib/kv";
 import {
   type CfbGame,
   canonicalize,
-  filterTeamGames,
+  filterTeamGamesFromSlate,
   getCfbSeasonSlate,
   normalizeSchool,
 } from "@/utils/schedules";
+import { probeNames } from "@/utils/debugSlate";
 import {
   getWeeklyStats,
   getRosterWithColleges,
@@ -113,7 +114,7 @@ export async function GET(
 
     const slate = [...regularSlate, ...postseasonSlate];
     const teamForFilter = unsluggedTeam || normalizedTeam;
-    const games = filterTeamGames(slate, teamForFilter);
+    const games = filterTeamGamesFromSlate(slate, teamForFilter);
 
     const meta: Record<string, unknown> = {
       requestedSlug: rawTeamParam,
@@ -146,10 +147,20 @@ export async function GET(
     }
 
     if (!games.length) {
+      const probe = {
+        alabama: probeNames(slate, "alab"),
+        ohio: probeNames(slate, "ohio"),
+      };
       if (cached && cached.length) {
-        return NextResponse.json({ team: normalizedTeam, season, rows: cached, cached: true, meta }, { headers: buildHeaders() });
+        return NextResponse.json(
+          { team: normalizedTeam, season, rows: cached, cached: true, meta: { ...meta, matched: 0, probe } },
+          { headers: buildHeaders() },
+        );
       }
-      return NextResponse.json({ team: normalizedTeam, season, rows: [], meta }, { headers: buildHeaders() });
+      return NextResponse.json(
+        { team: normalizedTeam, season, rows: [], meta: { ...meta, matched: 0, probe } },
+        { headers: buildHeaders() },
+      );
     }
 
     if (cached && cached.length) {

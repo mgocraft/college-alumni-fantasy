@@ -38,6 +38,38 @@ const SYN: Record<string, string> = {
   "alab": "alabama",
 };
 
+const STOP = new Set(["university", "the", "of", "and", "at", "state", "college"]);
+
+function tokens(raw?: string) {
+  if (!raw) return new Set<string>();
+  return new Set(
+    raw
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/\u2013|\u2014/g, "-")
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(" ")
+      .filter((w) => w && !STOP.has(w)),
+  );
+}
+
+function jaccard(a: Set<string>, b: Set<string>) {
+  const inter = new Set([...a].filter((x) => b.has(x)));
+  const union = new Set([...a, ...b]);
+  return inter.size / (union.size || 1);
+}
+
+function fuzzySameSchool(a: string, b: string) {
+  if (canonicalize(a) === canonicalize(b)) return true;
+  const A = tokens(a);
+  const B = tokens(b);
+  if (A.size && B.size && jaccard(A, B) >= 0.6) return true;
+  const sa = [...A].join(" ");
+  const sb = [...B].join(" ");
+  return sa.includes(sb) || sb.includes(sa);
+}
+
 export function canonicalize(raw?: string) {
   if (!raw) return "";
   let s = raw
@@ -195,24 +227,24 @@ export async function getCfbSeasonSlate(
   return sorted;
 }
 
-export function filterTeamGames(slate: CfbGame[], rawTeam: string): CfbGame[] {
-  const teamSlug = canonicalize(rawTeam);
-  if (!teamSlug) return [];
-
-  const directMatches = slate.filter(
-    (game) => sameSchool(game.home, rawTeam) || sameSchool(game.away, rawTeam),
+export function filterTeamGamesFromSlate(slate: CfbGame[], requestedTeam: string): CfbGame[] {
+  const team = requestedTeam.trim();
+  if (!team) return [];
+  const hard = slate.filter(
+    (game) =>
+      fuzzySameSchool(game.home, team) || fuzzySameSchool(game.away, team),
   );
-  if (directMatches.length) {
-    const sorted = [...directMatches];
+  if (hard.length) {
+    const sorted = [...hard];
     sorted.sort(sortGames);
     return sorted;
   }
 
-  const fallbackMatches = slate.filter((game) => {
-    const homeSlug = canonicalize(game.home);
-    const awaySlug = canonicalize(game.away);
-    return homeSlug.includes(teamSlug) || awaySlug.includes(teamSlug);
-  });
+  const needle = team.toLowerCase();
+  const fallbackMatches = slate.filter(
+    (game) =>
+      game.home.toLowerCase().includes(needle) || game.away.toLowerCase().includes(needle),
+  );
   const sorted = [...fallbackMatches];
   sorted.sort(sortGames);
   return sorted;
@@ -225,7 +257,7 @@ export async function getCfbTeamSeasonGames(season: number, team: string): Promi
   for (const seasonType of seasonTypes) {
     try {
       const slate = await getCfbSeasonSlate(season, seasonType);
-      const matches = filterTeamGames(slate, normalizedTeam);
+      const matches = filterTeamGamesFromSlate(slate, normalizedTeam);
       for (const game of matches) {
         games.push(game);
       }
