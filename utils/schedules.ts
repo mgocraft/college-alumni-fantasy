@@ -1,3 +1,4 @@
+import { kvGet, kvSet } from "@/lib/kv";
 import { normalizeSchool } from "./datasources";
 
 export type CfbGame = {
@@ -12,6 +13,11 @@ export type CfbGame = {
 const CFBD_API_BASE = "https://api.collegefootballdata.com";
 
 type SeasonType = "regular" | "postseason";
+
+const SEASON_SLATE_CACHE_TTL_SECONDS = 60 * 60 * 24;
+
+const buildSlateCacheKey = (season: number, seasonType: SeasonType) =>
+  `cfbd:slate:${season}:${seasonType}`;
 
 type RawCfbGame = {
   week?: number;
@@ -63,14 +69,21 @@ const mapTeamGame = (season: number, seasonType: SeasonType, raw: RawCfbGame): C
   };
 };
 
-const fetchTeamGames = async (season: number, team: string, seasonType: SeasonType): Promise<CfbGame[]> => {
+const sortGames = (a: CfbGame, b: CfbGame) => {
+  if (a.week !== b.week) return a.week - b.week;
+  if (a.kickoffISO && b.kickoffISO) return a.kickoffISO.localeCompare(b.kickoffISO);
+  if (a.kickoffISO) return -1;
+  if (b.kickoffISO) return 1;
+  return 0;
+};
+
+const fetchSeasonSlate = async (season: number, seasonType: SeasonType): Promise<CfbGame[]> => {
   const apiKey = process.env.CFBD_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("Missing CFBD_API_KEY environment variable");
   }
   const params = new URLSearchParams({
     year: String(season),
-    team,
     seasonType,
   });
   const res = await fetch(`${CFBD_API_BASE}/games?${params.toString()}`, {
@@ -78,11 +91,38 @@ const fetchTeamGames = async (season: number, team: string, seasonType: SeasonTy
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`CFBD team schedule fetch failed: ${res.status}`);
+    throw new Error(`CFBD season slate fetch failed: ${res.status}`);
   }
   const payload = (await res.json()) as RawCfbGame[];
   return payload.map((game) => mapTeamGame(season, seasonType, game));
 };
+
+export async function getCfbSeasonSlate(
+  season: number,
+  seasonType: SeasonType = "regular",
+): Promise<CfbGame[]> {
+  const cacheKey = buildSlateCacheKey(season, seasonType);
+  const cached = await kvGet<CfbGame[]>(cacheKey);
+  if (cached) {
+    if (!Array.isArray(cached)) return [];
+    const copy = [...cached];
+    copy.sort(sortGames);
+    return copy;
+  }
+
+  const fetched = await fetchSeasonSlate(season, seasonType);
+  const sorted = [...fetched];
+  sorted.sort(sortGames);
+  await kvSet(cacheKey, sorted, SEASON_SLATE_CACHE_TTL_SECONDS);
+  return sorted;
+}
+
+export function filterTeamGames(slate: CfbGame[], team: string): CfbGame[] {
+  const normalizedTeam = normalizeSchool(team);
+  if (!normalizedTeam) return [];
+  const matches = slate.filter((game) => game.home === normalizedTeam || game.away === normalizedTeam);
+  return matches.sort(sortGames);
+}
 
 export async function getCfbTeamSeasonGames(season: number, team: string): Promise<CfbGame[]> {
   const normalizedTeam = normalizeSchool(team);
@@ -90,8 +130,8 @@ export async function getCfbTeamSeasonGames(season: number, team: string): Promi
   const games: CfbGame[] = [];
   for (const seasonType of seasonTypes) {
     try {
-      const fetched = await fetchTeamGames(season, normalizedTeam, seasonType);
-      for (const game of fetched) {
+      const slate = await getCfbSeasonSlate(season, seasonType);
+      for (const game of slate) {
         if (game.home === normalizedTeam || game.away === normalizedTeam) {
           games.push(game);
         }
@@ -102,12 +142,6 @@ export async function getCfbTeamSeasonGames(season: number, team: string): Promi
       console.warn(`Failed to load ${seasonType} games for ${team}:`, error);
     }
   }
-  games.sort((a, b) => {
-    if (a.week !== b.week) return a.week - b.week;
-    if (a.kickoffISO && b.kickoffISO) return a.kickoffISO.localeCompare(b.kickoffISO);
-    if (a.kickoffISO) return -1;
-    if (b.kickoffISO) return 1;
-    return 0;
-  });
+  games.sort(sortGames);
   return games;
 }

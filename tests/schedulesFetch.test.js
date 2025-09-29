@@ -4,7 +4,7 @@ const path = require('node:path');
 
 const { loadTsModule } = require('./helpers/loadTsModule');
 
-test('getCfbTeamSeasonGames normalizes team before fetching schedule', async (t) => {
+test('getCfbTeamSeasonGames filters normalized team from season slate', async (t) => {
   const modulePath = path.resolve(__dirname, '../utils/schedules.ts');
   const originalFetch = global.fetch;
   const originalApiKey = process.env.CFBD_API_KEY;
@@ -14,10 +14,9 @@ test('getCfbTeamSeasonGames normalizes team before fetching schedule', async (t)
   global.fetch = async (url, options) => {
     requests.push({ url, options });
     const parsed = new URL(url);
-    const teamParam = parsed.searchParams.get('team');
     const seasonType = parsed.searchParams.get('seasonType');
 
-    assert.equal(teamParam, 'Miami (FL)', 'expected normalized team in CFBD request');
+    assert.equal(parsed.searchParams.get('team'), null, 'expected no team filter in CFBD request');
 
     const payload = [];
     if (seasonType === 'regular') {
@@ -25,6 +24,12 @@ test('getCfbTeamSeasonGames normalizes team before fetching schedule', async (t)
         week: 1,
         home_team: 'Miami (FL)',
         away_team: 'Florida A&M',
+        start_date: '2024-08-24',
+      });
+      payload.push({
+        week: 1,
+        home_team: 'Florida State',
+        away_team: 'Georgia Tech',
         start_date: '2024-08-24',
       });
     }
@@ -56,7 +61,6 @@ test('getCfbTeamSeasonGames normalizes team before fetching schedule', async (t)
   assert.equal(requests.length, 2);
   for (const request of requests) {
     const { searchParams } = new URL(request.url);
-    assert.equal(searchParams.get('team'), 'Miami (FL)');
     assert.equal(request.options?.headers?.Authorization, 'Bearer test-key');
   }
 });

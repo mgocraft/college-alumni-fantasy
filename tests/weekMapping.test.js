@@ -40,4 +40,7 @@ test('normalizeSchool maps common synonyms', () => {
   assert.equal(normalizeSchool('Miami'), 'Miami (FL)');
   assert.equal(normalizeSchool('Texas A&M'), 'Texas A&M');
   assert.equal(normalizeSchool('UTSA'), 'UTSA');
+  assert.equal(normalizeSchool('Ohio State Buckeyes'), 'Ohio State');
+  assert.equal(normalizeSchool('The Ohio State'), 'Ohio State');
+  assert.equal(normalizeSchool('Alabama Crimson Tide'), 'Alabama');
 });

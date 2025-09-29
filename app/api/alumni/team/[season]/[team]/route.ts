@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { kvGet, kvSet } from "@/lib/kv";
-import { getCfbTeamSeasonGames } from "@/utils/schedules";
+import { type CfbGame, filterTeamGames, getCfbSeasonSlate } from "@/utils/schedules";
 import {
   getWeeklyStats,
   getRosterWithColleges,
@@ -60,7 +60,7 @@ const buildCacheKey = (season: number, team: string) => `alumni:v1:team:${season
 const buildHeaders = () => ({ "Cache-Control": "s-maxage=3600, stale-while-revalidate=86400" });
 
 export async function GET(
-  _req: Request,
+  req: Request,
   context: { params: { season: string; team: string } },
 ) {
   const seasonParam = context.params?.season ?? "";
@@ -75,18 +75,65 @@ export async function GET(
     return NextResponse.json({ error: "invalid_team" }, { status: 400 });
   }
 
+  const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
+
   const cacheKey = buildCacheKey(season, normalizedTeam);
   const cached = await kvGet<ResultRow[]>(cacheKey);
-  if (cached && cached.length) {
+  if (cached && cached.length && !debug) {
     return NextResponse.json({ team: normalizedTeam, season, rows: cached, cached: true }, { headers: buildHeaders() });
   }
 
   try {
-    const games = (await getCfbTeamSeasonGames(season, rawTeam || normalizedTeam)).filter(
-      (game) => game.home === normalizedTeam || game.away === normalizedTeam,
-    );
+    const slateErrors: Record<string, string> = {};
+    let regularSlate: CfbGame[] = [];
+    try {
+      regularSlate = await getCfbSeasonSlate(season, "regular");
+    } catch (error) {
+      slateErrors.regular = error instanceof Error ? error.message : String(error);
+      if (!cached || !cached.length) throw error;
+    }
+
+    let postseasonSlate: CfbGame[] = [];
+    try {
+      postseasonSlate = await getCfbSeasonSlate(season, "postseason");
+    } catch (error) {
+      slateErrors.postseason = error instanceof Error ? error.message : String(error);
+      postseasonSlate = [];
+    }
+
+    const slate = [...regularSlate, ...postseasonSlate];
+    const games = filterTeamGames(slate, rawTeam || normalizedTeam);
+
+    const meta = debug
+      ? {
+          requestedTeam: rawTeam,
+          team: normalizedTeam,
+          slateCount: slate.length,
+          slateBreakdown: {
+            regular: regularSlate.length,
+            postseason: postseasonSlate.length,
+          },
+          firstGames: games.slice(0, 3),
+          slateErrors: Object.keys(slateErrors).length ? slateErrors : undefined,
+        }
+      : undefined;
+
     if (!games.length) {
-      return NextResponse.json({ team: normalizedTeam, season, rows: [] }, { headers: buildHeaders() });
+      if (cached && cached.length) {
+        return NextResponse.json(
+          { team: normalizedTeam, season, rows: cached, cached: true, meta },
+          { headers: buildHeaders() },
+        );
+      }
+      return NextResponse.json({ team: normalizedTeam, season, rows: [], meta }, { headers: buildHeaders() });
+    }
+
+    if (cached && cached.length && debug) {
+      return NextResponse.json(
+        { team: normalizedTeam, season, rows: cached, cached: true, meta },
+        { headers: buildHeaders() },
+      );
     }
 
     const { season: nflSeason, week: nflWeek } = lastCompletedNflWeek();
@@ -103,7 +150,10 @@ export async function GET(
           season: error.season,
           week: error.week,
         };
-        return NextResponse.json(payload, { status: 202, headers: buildHeaders() });
+        return NextResponse.json(meta ? { ...payload, meta } : payload, {
+          status: 202,
+          headers: buildHeaders(),
+        });
       }
       throw error;
     }
@@ -140,7 +190,7 @@ export async function GET(
 
     await kvSet(cacheKey, rows, CACHE_TTL_SECONDS);
 
-    return NextResponse.json({ team: normalizedTeam, season, rows, cached: false }, { headers: buildHeaders() });
+    return NextResponse.json({ team: normalizedTeam, season, rows, cached: false, meta }, { headers: buildHeaders() });
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error("[alumni] team results failed", error);
