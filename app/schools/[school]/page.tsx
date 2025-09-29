@@ -52,9 +52,15 @@ const decodeSchoolParam = (value: string): string => {
   }
   return current;
 };
+
+const unslugSchoolParam = (value: string): string => {
+  const decoded = decodeSchoolParam(value);
+  const spaced = decoded.replace(/[-_]+/g, " ");
+  return spaced.replace(/\b\w/g, (c) => c.toUpperCase());
+};
 export default function SchoolDetail({ params }: { params: { school: string } }) {
   const { school } = params; const sp = useSearchParams(); const router = useRouter();
-  const normalizedSchool = decodeSchoolParam(school);
+  const normalizedSchool = unslugSchoolParam(school);
   const schoolSlug = encodeURIComponent(normalizedSchool);
   const initialDefenseParam = (sp.get("defense") as 'none'|'approx'|null);
   const [format,setFormat]=useState(sp.get("format")??"ppr"); const [season,setSeason]=useState(sp.get("season")??"2025");

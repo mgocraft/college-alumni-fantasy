@@ -20,31 +20,81 @@ const buildSlateCacheKey = (season: number, seasonType: SeasonType) =>
   `cfbd:slate:${season}:${seasonType}`;
 
 const SYN: Record<string, string> = {
-  // high-risk aliases
-  "Ohio State": "Ohio State",
-  "Ohio St": "Ohio State",
-  "Ohio St.": "Ohio State",
-  "The Ohio State": "Ohio State",
-  "Ohio State Buckeyes": "Ohio State",
-  // keep your other mappings
-  "Miami": "Miami (FL)",
-  "Texas A&M": "Texas A&M",
-  "Ole Miss": "Ole Miss",
+  "miami": "miami fl",
+  "miami fl": "miami fl",
+  "miami fla": "miami fl",
+  "miami hurricanes": "miami fl",
+  "texas a and m": "texas a m",
+  "texas a m": "texas a m",
+  "texas am": "texas a m",
+  "ole miss": "ole miss",
+  "the ohio state": "ohio state",
+  "ohio st": "ohio state",
+  "ohio state buckeyes": "ohio state",
+  "ohio st buckeyes": "ohio state",
+  "alabama crimson tide": "alabama",
+  "crimson tide": "alabama",
+  "bama": "alabama",
+  "alab": "alabama",
 };
+
+export function canonicalize(raw?: string) {
+  if (!raw) return "";
+  let s = raw
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/\u2013|\u2014/g, "-")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(university|of|the)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  s = SYN[s] ?? s;
+  const slug = s.replace(/[^a-z0-9]+/g, "");
+  return slug;
+}
+
+const DISPLAY_OVERRIDES: Record<string, string> = (() => {
+  const entries: Array<[string, string]> = [
+    ["Miami", "Miami (FL)"],
+    ["Miami (FL)", "Miami (FL)"],
+    ["Texas A&M", "Texas A&M"],
+    ["Texas A and M", "Texas A&M"],
+    ["Ole Miss", "Ole Miss"],
+    ["Ohio State", "Ohio State"],
+    ["Ohio St", "Ohio State"],
+    ["Ohio St.", "Ohio State"],
+    ["The Ohio State", "Ohio State"],
+    ["Ohio State Buckeyes", "Ohio State"],
+    ["Alabama", "Alabama"],
+    ["Alabama Crimson Tide", "Alabama"],
+    ["Crimson Tide", "Alabama"],
+    ["Alab", "Alabama"],
+  ];
+  return entries.reduce<Record<string, string>>((acc, [raw, value]) => {
+    const slug = canonicalize(raw);
+    if (slug) acc[slug] = value;
+    return acc;
+  }, {});
+})();
 
 export function normalizeSchool(n?: string) {
   if (!n) return "";
-  const x = n.replace(/\u2013|\u2014/g, "-").replace(/\s+/g, " ").trim();
-  const mapped = SYN[x] ?? x;
-  return normalizeSchoolBase(mapped);
+  const cleaned = n
+    .replace(/\u2013|\u2014/g, "-")
+    .replace(/[-_/]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const slug = canonicalize(cleaned);
+  const override = DISPLAY_OVERRIDES[slug];
+  if (override) return override;
+  const base = normalizeSchoolBase(cleaned);
+  return base || cleaned;
 }
 
-function eqLoose(a: string, b: string) {
-  const A = normalizeSchool(a).toLowerCase();
-  const B = normalizeSchool(b).toLowerCase();
-  if (A === B) return true;
-  // extra tolerance: “ohio st” vs “ohio state”
-  return A.replace(/\bst\b/g, "state") === B.replace(/\bst\b/g, "state");
+export function sameSchool(a?: string, b?: string) {
+  return canonicalize(a) === canonicalize(b);
 }
 
 type RawCfbGame = {
@@ -146,21 +196,24 @@ export async function getCfbSeasonSlate(
 }
 
 export function filterTeamGames(slate: CfbGame[], rawTeam: string): CfbGame[] {
-  const team = normalizeSchool(rawTeam);
-  if (!team) return [];
-  // 1) strict normalized match
-  let out = slate.filter((game) => eqLoose(game.home, team) || eqLoose(game.away, team));
-  if (out.length) {
-    const sorted = [...out];
+  const teamSlug = canonicalize(rawTeam);
+  if (!teamSlug) return [];
+
+  const directMatches = slate.filter(
+    (game) => sameSchool(game.home, rawTeam) || sameSchool(game.away, rawTeam),
+  );
+  if (directMatches.length) {
+    const sorted = [...directMatches];
     sorted.sort(sortGames);
     return sorted;
   }
-  // 2) fallback: substring fuzzy (case-insensitive) to catch odd labels
-  const needle = team.toLowerCase();
-  out = slate.filter(
-    (game) => game.home.toLowerCase().includes(needle) || game.away.toLowerCase().includes(needle),
-  );
-  const sorted = [...out];
+
+  const fallbackMatches = slate.filter((game) => {
+    const homeSlug = canonicalize(game.home);
+    const awaySlug = canonicalize(game.away);
+    return homeSlug.includes(teamSlug) || awaySlug.includes(teamSlug);
+  });
+  const sorted = [...fallbackMatches];
   sorted.sort(sortGames);
   return sorted;
 }
