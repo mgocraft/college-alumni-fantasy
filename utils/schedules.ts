@@ -1,3 +1,4 @@
+import { DateTime } from "luxon";
 import { kvGet, kvSet } from "@/lib/kv";
 import { normalizeSchool as normalizeSchoolBase } from "./datasources";
 
@@ -20,16 +21,17 @@ const buildSlateCacheKey = (season: number, seasonType: SeasonType) =>
   `cfbd:slate:${season}:${seasonType}`;
 
 const SYN: Record<string, string> = {
-  "miami": "miami fl",
-  "miami fl": "miami fl",
-  "miami fla": "miami fl",
-  "miami hurricanes": "miami fl",
-  "texas a and m": "texas a m",
-  "texas a m": "texas a m",
-  "texas am": "texas a m",
+  "miami": "miami (fl)",
+  "miami fl": "miami (fl)",
+  "miami fla": "miami (fl)",
+  "miami hurricanes": "miami (fl)",
+  "texas a and m": "texas a&m",
+  "texas a m": "texas a&m",
+  "texas am": "texas a&m",
   "ole miss": "ole miss",
   "the ohio state": "ohio state",
   "ohio st": "ohio state",
+  "ohio st.": "ohio state",
   "ohio state buckeyes": "ohio state",
   "ohio st buckeyes": "ohio state",
   "alabama crimson tide": "alabama",
@@ -38,39 +40,7 @@ const SYN: Record<string, string> = {
   "alab": "alabama",
 };
 
-const STOP = new Set(["university", "the", "of", "and", "at", "state", "college"]);
-
-function tokens(raw?: string) {
-  if (!raw) return new Set<string>();
-  return new Set(
-    raw
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/\u2013|\u2014/g, "-")
-      .replace(/&/g, " and ")
-      .replace(/[^a-z0-9]+/g, " ")
-      .split(" ")
-      .filter((w) => w && !STOP.has(w)),
-  );
-}
-
-function jaccard(a: Set<string>, b: Set<string>) {
-  const inter = new Set([...a].filter((x) => b.has(x)));
-  const union = new Set([...a, ...b]);
-  return inter.size / (union.size || 1);
-}
-
-function fuzzySameSchool(a: string, b: string) {
-  if (canonicalize(a) === canonicalize(b)) return true;
-  const A = tokens(a);
-  const B = tokens(b);
-  if (A.size && B.size && jaccard(A, B) >= 0.6) return true;
-  const sa = [...A].join(" ");
-  const sb = [...B].join(" ");
-  return sa.includes(sb) || sb.includes(sa);
-}
-
-export function canonicalize(raw?: string) {
+export function canonicalTeam(raw?: string) {
   if (!raw) return "";
   let s = raw
     .toLowerCase()
@@ -78,13 +48,20 @@ export function canonicalize(raw?: string) {
     .replace(/\u2013|\u2014/g, "-")
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\b(university|of|the)\b/g, "")
+    .replace(/\b(university|the|of|at)\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
   s = SYN[s] ?? s;
-  const slug = s.replace(/[^a-z0-9]+/g, "");
-  return slug;
+
+  return s;
+}
+
+const canonicalSlug = (raw?: string) => canonicalTeam(raw).replace(/[^a-z0-9]+/g, "");
+
+export function canonicalize(raw?: string) {
+  if (!raw) return "";
+  return canonicalSlug(raw);
 }
 
 const DISPLAY_OVERRIDES: Record<string, string> = (() => {
@@ -105,7 +82,7 @@ const DISPLAY_OVERRIDES: Record<string, string> = (() => {
     ["Alab", "Alabama"],
   ];
   return entries.reduce<Record<string, string>>((acc, [raw, value]) => {
-    const slug = canonicalize(raw);
+    const slug = canonicalSlug(raw);
     if (slug) acc[slug] = value;
     return acc;
   }, {});
@@ -118,7 +95,7 @@ export function normalizeSchool(n?: string) {
     .replace(/[-_/]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const slug = canonicalize(cleaned);
+  const slug = canonicalSlug(cleaned);
   const override = DISPLAY_OVERRIDES[slug];
   if (override) return override;
   const base = normalizeSchoolBase(cleaned);
@@ -126,7 +103,7 @@ export function normalizeSchool(n?: string) {
 }
 
 export function sameSchool(a?: string, b?: string) {
-  return canonicalize(a) === canonicalize(b);
+  return canonicalTeam(a) === canonicalTeam(b);
 }
 
 type RawCfbGame = {
@@ -140,42 +117,39 @@ type RawCfbGame = {
   kickoff?: string;
 };
 
-const parseIsoCandidate = (value: unknown): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
+const toIsoOrNull = (value?: string | null): string | null => {
+  if (!value) return null;
+  const dt = DateTime.fromISO(value, { zone: "utc" });
+  return dt.isValid ? dt.toISO() : null;
 };
 
-const combineDateAndTime = (dateValue: unknown, timeValue: unknown): string | null => {
-  if (typeof dateValue !== "string") return null;
-  const date = dateValue.trim();
-  if (!date) return null;
-  if (typeof timeValue !== "string" || !timeValue.trim()) {
-    return parseIsoCandidate(date);
-  }
-  const candidate = `${date}T${timeValue.trim()}`;
-  return parseIsoCandidate(candidate);
-};
-
-const mapTeamGame = (season: number, seasonType: SeasonType, raw: RawCfbGame): CfbGame => {
+const mapTeamGame = (season: number, seasonType: SeasonType, raw: RawCfbGame): CfbGame | null => {
   const week = Number(raw.week ?? 0);
-  const home = normalizeSchool(String(raw.home_team ?? raw.home ?? ""));
-  const away = normalizeSchool(String(raw.away_team ?? raw.away ?? ""));
-  const kickoffISO =
-    parseIsoCandidate(raw.start_date)
-    || parseIsoCandidate(raw.start_time)
-    || parseIsoCandidate(raw.kickoff)
-    || combineDateAndTime(raw.start_date, raw.start_time);
+  const homeRaw = typeof raw.home_team === "string" && raw.home_team.trim()
+    ? raw.home_team.trim()
+    : typeof raw.home === "string"
+      ? raw.home.trim()
+      : "";
+  const awayRaw = typeof raw.away_team === "string" && raw.away_team.trim()
+    ? raw.away_team.trim()
+    : typeof raw.away === "string"
+      ? raw.away.trim()
+      : "";
+  if (!homeRaw || !awayRaw) return null;
+
+  const kickoffCandidate =
+    (typeof raw.start_date === "string" && raw.start_date.trim() ? raw.start_date.trim() : null)
+    ?? (typeof raw.start_time === "string" && raw.start_time.trim() ? raw.start_time.trim() : null)
+    ?? (typeof raw.kickoff === "string" && raw.kickoff.trim() ? raw.kickoff.trim() : null)
+    ?? null;
+
   return {
     season,
     week,
     seasonType,
-    home,
-    away,
-    kickoffISO,
+    home: normalizeSchool(homeRaw),
+    away: normalizeSchool(awayRaw),
+    kickoffISO: toIsoOrNull(kickoffCandidate),
   };
 };
 
@@ -204,7 +178,18 @@ const fetchSeasonSlate = async (season: number, seasonType: SeasonType): Promise
     throw new Error(`CFBD season slate fetch failed: ${res.status}`);
   }
   const payload = (await res.json()) as RawCfbGame[];
-  return payload.map((game) => mapTeamGame(season, seasonType, game));
+  const rows: CfbGame[] = [];
+  for (const game of payload) {
+    const mapped = mapTeamGame(season, seasonType, game);
+    if (!mapped) continue;
+    rows.push(mapped);
+  }
+  const bad = rows.filter((game) => !game.home || !game.away);
+  if (bad.length) {
+    // eslint-disable-next-line no-console
+    console.warn("CFB slate had blank teams:", bad.length);
+  }
+  return rows;
 };
 
 export async function getCfbSeasonSlate(
@@ -230,22 +215,27 @@ export async function getCfbSeasonSlate(
 export function filterTeamGamesFromSlate(slate: CfbGame[], requestedTeam: string): CfbGame[] {
   const team = requestedTeam.trim();
   if (!team) return [];
-  const hard = slate.filter(
-    (game) =>
-      fuzzySameSchool(game.home, team) || fuzzySameSchool(game.away, team),
-  );
-  if (hard.length) {
-    const sorted = [...hard];
+  const canonical = canonicalTeam(team);
+  if (!canonical) return [];
+
+  const strictMatches = slate.filter((game) => {
+    if (!game.home || !game.away) return false;
+    return canonicalTeam(game.home) === canonical || canonicalTeam(game.away) === canonical;
+  });
+  if (strictMatches.length) {
+    const sorted = [...strictMatches];
     sorted.sort(sortGames);
     return sorted;
   }
 
-  const needle = team.toLowerCase();
-  const fallbackMatches = slate.filter(
-    (game) =>
-      game.home.toLowerCase().includes(needle) || game.away.toLowerCase().includes(needle),
-  );
-  const sorted = [...fallbackMatches];
+  const fallback = slate.filter((game) => {
+    if (!game.home || !game.away) return false;
+    const home = canonicalTeam(game.home);
+    const away = canonicalTeam(game.away);
+    if (!home || !away) return false;
+    return home.includes(canonical) || away.includes(canonical);
+  });
+  const sorted = [...fallback];
   sorted.sort(sortGames);
   return sorted;
 }

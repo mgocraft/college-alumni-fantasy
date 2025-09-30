@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { kvGet, kvSet } from "@/lib/kv";
 import {
   type CfbGame,
+  canonicalTeam,
   canonicalize,
   filterTeamGamesFromSlate,
   getCfbSeasonSlate,
@@ -113,14 +114,19 @@ export async function GET(
     }
 
     const slate = [...regularSlate, ...postseasonSlate];
+    const filteredSlate = slate.filter((game) => game.home && game.away);
     const teamForFilter = unsluggedTeam || normalizedTeam;
-    const games = filterTeamGamesFromSlate(slate, teamForFilter);
+    const games = filterTeamGamesFromSlate(filteredSlate, teamForFilter);
+
+    const blankSlateRows = slate.length - filteredSlate.length;
 
     const meta: Record<string, unknown> = {
       requestedSlug: rawTeamParam,
       requestedTeam: unsluggedTeam,
       team: normalizedTeam,
       slateCount: slate.length,
+      filteredSlateCount: filteredSlate.length,
+      blankSlateRows,
       matched: games.length,
     };
 
@@ -141,9 +147,13 @@ export async function GET(
         postseason: postseasonSlate.length,
       };
       meta.firstGames = games.slice(0, 3);
+      const canonicalRequested = canonicalTeam(teamForFilter);
       meta.slateErrors = Object.keys(slateErrors).length ? slateErrors : undefined;
       meta.probe = probe;
-      meta.canon = canon;
+      meta.canon = {
+        ...canon,
+        requestedTeam: canonicalRequested,
+      };
     }
 
     if (!games.length) {
@@ -196,9 +206,11 @@ export async function GET(
     const joined = await joinStatsToColleges(stats, roster);
 
     const rows: ResultRow[] = [];
+    const canonicalNormalized = canonicalTeam(normalizedTeam);
+
     for (const game of games) {
       const totals = sumForMatchup(joined.rows, game.home, game.away);
-      const isHome = game.home === normalizedTeam;
+      const isHome = canonicalTeam(game.home) === canonicalNormalized;
       const opponent = isHome ? game.away : game.home;
       const usRaw = isHome ? totals.home : totals.away;
       const oppRaw = isHome ? totals.away : totals.home;
