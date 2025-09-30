@@ -11,6 +11,7 @@ import {
 } from "@/utils/datasources";
 import { lastCompletedNflWeek, nflWeekWindowUtc } from "@/utils/nflWeek";
 import type { PlayerWeekly } from "@/utils/compute";
+import type { SlateDiagnostics, SlateMatchSample } from "@/types/alumniTeam";
 
 export const runtime = "nodejs";
 
@@ -98,53 +99,69 @@ export async function GET(
 
     const slate: CfbGame[] = [...regularResult.slate, ...postseasonResult.slate];
     const teamForFilter = unsluggedTeam || normalizedTeam;
-    const games = filterTeamGamesFromSlate(slate, teamForFilter);
+    const filterNormalized = normalizeSchool(teamForFilter);
+    const filterCanonical = canonicalTeam(filterNormalized || teamForFilter) || null;
+    const games = filterTeamGamesFromSlate(slate, teamForFilter, { debug });
 
-    const providerUsed: "cfbd" = "cfbd";
+    const matchSample: SlateMatchSample[] = games.slice(0, 3).map((game) => ({
+      week: game.week,
+      kickoffISO: game.kickoffISO,
+      home: game.home,
+      away: game.away,
+      homeCanonical: canonicalTeam(game.home) || null,
+      awayCanonical: canonicalTeam(game.away) || null,
+    }));
 
-    const meta: Record<string, unknown> = {
+    const meta: SlateDiagnostics = {
       requestedSlug: rawTeamParam,
-      requestedTeam: unsluggedTeam,
-      team: normalizedTeam,
-      slateCount: slate.length,
-      slateRegularCount: regularResult.slate.length,
-      slatePostseasonCount: postseasonResult.slate.length,
-      cfbdStatus: regularResult.status,
-      cfbdErr: regularResult.error,
-      cfbdPostStatus: postseasonResult.status,
-      cfbdPostErr: postseasonResult.error,
-      matched: games.length,
-      providerUsed,
       requestedTeamOriginal: teamRaw,
-      teamCanonical: canonicalTeam(teamForFilter),
+      requestedTeam: unsluggedTeam,
+      normalizedTeam,
+      provider: "cfbd",
+      filter: {
+        input: teamForFilter,
+        normalized: filterNormalized,
+        canonical: filterCanonical,
+      },
+      slate: {
+        total: slate.length,
+        regular: {
+          count: regularResult.slate.length,
+          status: regularResult.status,
+          error: regularResult.error,
+        },
+        postseason: {
+          count: postseasonResult.slate.length,
+          status: postseasonResult.status,
+          error: postseasonResult.error,
+        },
+      },
+      matches: {
+        count: games.length,
+        sample: matchSample,
+      },
     };
 
     if (debug) {
-      meta.firstGames = games.slice(0, 3);
-      meta.probe = {
+      meta.probes = {
         alabama: probeNames(slate, "alab"),
         ohio: probeNames(slate, "ohio"),
-      };
-      meta.canon = {
-        requested: canonicalize(teamForFilter),
-        requestedTeam: canonicalTeam(teamForFilter),
+        canonicalizedRequested: {
+          canonicalized: canonicalize(teamForFilter),
+          canonical: filterCanonical,
+        },
       };
     }
 
     if (!games.length) {
-      const probe = {
-        alabama: probeNames(slate, "alab"),
-        ohio: probeNames(slate, "ohio"),
-      };
-      const metaWithProbe = { ...meta, matched: 0, probe };
       if (cached && cached.length) {
         return NextResponse.json(
-          { team: normalizedTeam, season, rows: cached, cached: true, meta: metaWithProbe },
+          { team: normalizedTeam, season, rows: cached, cached: true, meta },
           { headers: buildHeaders() },
         );
       }
       return NextResponse.json(
-        { team: normalizedTeam, season, rows: [], meta: metaWithProbe },
+        { team: normalizedTeam, season, rows: [], meta },
         { headers: buildHeaders() },
       );
     }

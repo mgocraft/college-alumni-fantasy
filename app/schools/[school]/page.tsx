@@ -1,13 +1,39 @@
 
 'use client';
+
 import { useEffect, useState, type ReactNode } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { useRouter, useSearchParams } from "next/navigation";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+
 import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
+import type { SlateDiagnostics } from "@/types/alumniTeam";
 import { useDefenseStatus } from "@/utils/useDefenseStatus";
-type Performer = { name:string; position:string; team?:string; points:number; college?:string|null; meta?:any };
-type SeriesPoint = { week:number; totalPoints:number; performers:Performer[] };
-type Api = { school:string; season:number; format:string; mode:'weekly'|'avg'; includeK:boolean; defense:'none'|'approx'; series: SeriesPoint[] };
+
+type Performer = {
+  name: string;
+  position: string;
+  team?: string;
+  points: number;
+  college?: string | null;
+  meta?: any;
+};
+
+type SeriesPoint = {
+  week: number;
+  totalPoints: number;
+  performers: Performer[];
+};
+
+type Api = {
+  school: string;
+  season: number;
+  format: string;
+  mode: "weekly" | "avg";
+  includeK: boolean;
+  defense: "none" | "approx";
+  series: SeriesPoint[];
+};
+
 type GameResultRow = {
   cfbWeek: number;
   cfbDate: string;
@@ -21,21 +47,22 @@ type GameResultRow = {
   nflWindowStart: string;
   nflWindowEnd: string;
 };
-type GameResultsMeta = {
-  requestedTeam?: string;
-  team?: string;
-  slateCount?: number;
-  matched?: number;
-  sample?: unknown;
-  slateBreakdown?: {
-    regular: number;
-    postseason: number;
-  };
-  firstGames?: unknown;
-  slateErrors?: Record<string, string> | undefined;
+
+type GameResultsResponse = {
+  team: string;
+  season: number;
+  rows: GameResultRow[];
+  cached?: boolean;
+  meta?: SlateDiagnostics;
 };
-type GameResultsResponse = { team: string; season: number; rows: GameResultRow[]; cached?: boolean; meta?: GameResultsMeta };
-type PendingGameResults = { status: "pending"; message: string; season: number; week: number };
+
+type PendingGameResults = {
+  status: "pending";
+  message: string;
+  season: number;
+  week: number;
+  meta?: SlateDiagnostics;
+};
 
 const decodeSchoolParam = (value: string): string => {
   if (!value) return value;
@@ -59,19 +86,29 @@ const unslugSchoolParam = (value: string): string => {
   return spaced.replace(/\b\w/g, (c) => c.toUpperCase());
 };
 export default function SchoolDetail({ params }: { params: { school: string } }) {
-  const { school } = params; const sp = useSearchParams(); const router = useRouter();
+  const { school } = params;
+  const sp = useSearchParams();
+  const router = useRouter();
+  const debugRequested = sp.get("debug") === "1";
   const normalizedSchool = unslugSchoolParam(school);
   const schoolSlug = encodeURIComponent(normalizedSchool);
-  const initialDefenseParam = (sp.get("defense") as 'none'|'approx'|null);
-  const [format,setFormat]=useState(sp.get("format")??"ppr"); const [season,setSeason]=useState(sp.get("season")??"2025");
-  const [mode,setMode]=useState<"weekly"|"avg">((sp.get("mode") as any)??"weekly"); const [includeK,setIncludeK]=useState(true);
-  const [defense,setDefense]=useState<'none'|'approx'>(initialDefenseParam === 'none' ? 'none' : 'approx');
-  const [startWeek,setStartWeek]=useState(sp.get("startWeek")??"1"); const [endWeek,setEndWeek]=useState(sp.get("endWeek")??"18");
-  const [data,setData]=useState<Api|null>(null), [loading,setLoading]=useState(true), [error,setError]=useState<string|null>(null);
-  const [gameResults,setGameResults]=useState<GameResultsResponse|null>(null);
-  const [gameResultsLoading,setGameResultsLoading]=useState(true);
-  const [gameResultsError,setGameResultsError]=useState<string|null>(null);
-  const [gameResultsPending,setGameResultsPending]=useState<PendingGameResults|null>(null);
+  const initialDefenseParam = sp.get("defense") as "none" | "approx" | null;
+  const [format, setFormat] = useState(sp.get("format") ?? "ppr");
+  const [season, setSeason] = useState(sp.get("season") ?? "2025");
+  const [mode, setMode] = useState<"weekly" | "avg">((sp.get("mode") as any) ?? "weekly");
+  const [includeK, setIncludeK] = useState(true);
+  const [defense, setDefense] = useState<"none" | "approx">(
+    initialDefenseParam === "none" ? "none" : "approx",
+  );
+  const [startWeek, setStartWeek] = useState(sp.get("startWeek") ?? "1");
+  const [endWeek, setEndWeek] = useState(sp.get("endWeek") ?? "18");
+  const [data, setData] = useState<Api | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [gameResults, setGameResults] = useState<GameResultsResponse | null>(null);
+  const [gameResultsLoading, setGameResultsLoading] = useState(true);
+  const [gameResultsError, setGameResultsError] = useState<string | null>(null);
+  const [gameResultsPending, setGameResultsPending] = useState<PendingGameResults | null>(null);
   const parsedSeason = Number.parseInt(season, 10);
   const parsedEndWeek = Number.parseInt(endWeek, 10);
   const defenseStatus = useDefenseStatus({
@@ -91,9 +128,9 @@ export default function SchoolDetail({ params }: { params: { school: string } })
       return;
     }
     try {
-      const response = await fetchJson<GameResultsResponse | PendingGameResults>(
-        `/api/alumni/team/${parsed}/${schoolSlug}`,
-      );
+      const teamPath = `/api/alumni/team/${parsed}/${schoolSlug}`;
+      const url = debugRequested ? `${teamPath}?debug=1` : teamPath;
+      const response = await fetchJson<GameResultsResponse | PendingGameResults>(url);
       if (response && typeof response === "object" && "status" in response && response.status === "pending") {
         setGameResults(null);
         setGameResultsPending(response);
@@ -115,7 +152,17 @@ export default function SchoolDetail({ params }: { params: { school: string } })
     }
   };
   const refresh = async () => {
-    const q = new URLSearchParams({ season, startWeek, endWeek, format, mode, includeK: String(includeK), defense }).toString();
+    const params = new URLSearchParams({
+      season,
+      startWeek,
+      endWeek,
+      format,
+      mode,
+      includeK: String(includeK),
+      defense,
+    });
+    if (debugRequested) params.set("debug", "1");
+    const q = params.toString();
     router.replace(`/schools/${schoolSlug}?${q}`);
     setLoading(true);
     setError(null);
@@ -149,6 +196,123 @@ export default function SchoolDetail({ params }: { params: { school: string } })
     return `${format(start)} → ${format(end)}`;
   };
   const gameResultsSeasonLabel = gameResults?.season ?? (Number.isFinite(parsedSeason) ? parsedSeason : new Date().getFullYear());
+  const debugMeta = gameResults?.meta ?? gameResultsPending?.meta;
+  const debugListStyle = { margin: '4px 0 0', paddingLeft: 16 } as const;
+  const formatDebugValue = (value?: string | null) => {
+    if (typeof value === 'string') {
+      return value.length ? value : '∅ (empty)';
+    }
+    if (value === null || value === undefined) return '∅ (empty)';
+    return String(value);
+  };
+  const debugCard = debugMeta ? (
+    <details
+      style={{
+        marginTop: 12,
+        background: '#0b1220',
+        borderRadius: 12,
+        border: '1px solid #1e293b',
+        padding: 12,
+        color: '#cbd5f5',
+      }}
+      open={debugRequested}
+    >
+      <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Debug slate fetch</summary>
+      <div style={{ marginTop: 8, fontSize: '0.85rem', lineHeight: 1.5 }}>
+        <div>
+          <strong>Request</strong>
+          <ul style={debugListStyle}>
+            <li>Slug: {formatDebugValue(debugMeta.requestedSlug)}</li>
+            <li>Display: {formatDebugValue(debugMeta.requestedTeam)}</li>
+            <li>Original: {formatDebugValue(debugMeta.requestedTeamOriginal)}</li>
+            <li>Normalized: {formatDebugValue(debugMeta.normalizedTeam)}</li>
+          </ul>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <strong>Filter</strong>
+          <ul style={debugListStyle}>
+            <li>Input: {formatDebugValue(debugMeta.filter.input)}</li>
+            <li>Normalized: {formatDebugValue(debugMeta.filter.normalized)}</li>
+            <li>Canonical: {formatDebugValue(debugMeta.filter.canonical)}</li>
+          </ul>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <strong>Slate counts</strong>
+          <ul style={debugListStyle}>
+            <li>Total: {debugMeta.slate.total}</li>
+            <li>
+              Regular: {debugMeta.slate.regular.count}
+              {typeof debugMeta.slate.regular.status === 'number' ? ` (status ${debugMeta.slate.regular.status})` : ''}
+              {debugMeta.slate.regular.error ? (
+                <span style={{ color: '#f87171' }}> — {debugMeta.slate.regular.error}</span>
+              ) : null}
+            </li>
+            <li>
+              Postseason: {debugMeta.slate.postseason.count}
+              {typeof debugMeta.slate.postseason.status === 'number' ? ` (status ${debugMeta.slate.postseason.status})` : ''}
+              {debugMeta.slate.postseason.error ? (
+                <span style={{ color: '#f87171' }}> — {debugMeta.slate.postseason.error}</span>
+              ) : null}
+            </li>
+          </ul>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <strong>Matches</strong>
+          <div>Count: {debugMeta.matches.count}</div>
+          {debugMeta.matches.sample.length ? (
+            <ul style={debugListStyle}>
+              {debugMeta.matches.sample.map((sample, idx) => (
+                <li key={`${sample.week}-${sample.home}-${sample.away}-${idx}`}>
+                  W{sample.week ?? '—'}: {sample.home} ({sample.homeCanonical || '—'}) vs {sample.away} ({sample.awayCanonical || '—'})
+                  {sample.kickoffISO ? ` @ ${sample.kickoffISO.slice(0, 10)}` : ''}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ marginTop: 4, fontStyle: 'italic', color: '#94a3b8' }}>No matched game sample.</p>
+          )}
+        </div>
+        {debugMeta.probes ? (
+          <div style={{ marginTop: 8 }}>
+            <strong>Probes</strong>
+            <ul style={debugListStyle}>
+              {Object.entries(debugMeta.probes).map(([key, value]) => (
+                <li key={key}>
+                  <span style={{ fontWeight: 500 }}>{key}</span>
+                  {Array.isArray(value) ? (
+                    value.length ? (
+                      <ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>
+                        {value.map((entry, entryIdx) => (
+                          <li key={`${key}-${entryIdx}`}>{entry}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span style={{ marginLeft: 4, color: '#94a3b8' }}> — no matches</span>
+                    )
+                  ) : typeof value === 'object' && value ? (
+                    <pre
+                      style={{
+                        marginTop: 4,
+                        padding: 8,
+                        background: '#0f172a',
+                        borderRadius: 8,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {JSON.stringify(value, null, 2)}
+                    </pre>
+                  ) : (
+                    <span style={{ marginLeft: 4 }}> — {String(value ?? '—')}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  ) : null;
   let gameResultsBody: ReactNode;
   if (gameResultsLoading) {
     gameResultsBody = <p>Loading game results…</p>;
@@ -264,6 +428,7 @@ export default function SchoolDetail({ params }: { params: { school: string } })
       </div>
       <div className="card">
         <h2>{normalizedSchool} — Game Results ({gameResultsSeasonLabel})</h2>
+        {debugCard}
         {gameResultsBody}
       </div>
     </div>
