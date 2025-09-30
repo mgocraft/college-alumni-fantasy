@@ -33,7 +33,12 @@ export function filterTeamGamesFromSlate(slate: CfbGame[], requestedTeam: string
     const home = canonicalTeam(game.home);
     const away = canonicalTeam(game.away);
     if (!home || !away) return false;
-    return home.includes(canonical) || away.includes(canonical);
+    return (
+      home.includes(canonical) ||
+      away.includes(canonical) ||
+      canonical.includes(home) ||
+      canonical.includes(away)
+    );
   });
   const sorted = [...fallback];
   sorted.sort(sortGames);
