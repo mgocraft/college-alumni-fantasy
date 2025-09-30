@@ -18,6 +18,20 @@ export function filterTeamGamesFromSlate(slate: CfbGame[], requestedTeam: string
   const canonical = canonicalTeam(team);
   if (!canonical) return [];
 
+  if (slate.length) {
+    const sample = slate[0];
+    const sampleHomeCanonical = sample.home ? canonicalTeam(sample.home) : "";
+    const sampleAwayCanonical = sample.away ? canonicalTeam(sample.away) : "";
+    // eslint-disable-next-line no-console
+    console.log("filterTeamGamesFromSlate canonical", {
+      canonical,
+      sampleHomeCanonical,
+      sampleAwayCanonical,
+      sampleHome: sample.home,
+      sampleAway: sample.away,
+    });
+  }
+
   const strictMatches = slate.filter((game) => {
     if (!game.home || !game.away) return false;
     return canonicalTeam(game.home) === canonical || canonicalTeam(game.away) === canonical;
@@ -49,10 +63,23 @@ export async function getCfbTeamSeasonGames(season: number, team: string): Promi
   const normalizedTeam = normalizeSchool(team);
   const seasonTypes: SeasonType[] = ["regular", "postseason"];
   const games: CfbGame[] = [];
+  // eslint-disable-next-line no-console
+  console.log("team normalization", { team, normalizedTeam });
   for (const seasonType of seasonTypes) {
     try {
-      const { slate, error } = await getCfbSeasonSlate(season, seasonType);
+      const { slate, error, status } = await getCfbSeasonSlate(season, seasonType);
+      // eslint-disable-next-line no-console
+      console.log("getCfbSeasonSlate response", {
+        season,
+        seasonType,
+        slateLength: slate.length,
+        error,
+        status,
+      });
       if (error) {
+        if (status && status !== 200) {
+          await getCfbSeasonSlate(season, seasonType, true);
+        }
         throw new Error(error);
       }
       const matches = filterTeamGamesFromSlate(slate, normalizedTeam);

@@ -40,6 +40,21 @@ const mapGame = (season: number, seasonType: SeasonType, raw: Record<string, unk
   ).trim();
   if (!homeRaw || !awayRaw) return null;
 
+  const homeNormalized = normalizeSchool(homeRaw);
+  const awayNormalized = normalizeSchool(awayRaw);
+  const homeCanonical = canonicalTeam(homeNormalized);
+  const awayCanonical = canonicalTeam(awayNormalized);
+
+  // eslint-disable-next-line no-console
+  console.log("mapGame normalization", {
+    homeRaw,
+    awayRaw,
+    homeNormalized,
+    awayNormalized,
+    homeCanonical,
+    awayCanonical,
+  });
+
   const kickoffCandidate =
     (raw as { start_date?: unknown }).start_date
       ? String((raw as { start_date?: unknown }).start_date)
@@ -53,8 +68,8 @@ const mapGame = (season: number, seasonType: SeasonType, raw: Record<string, unk
     season,
     week,
     seasonType,
-    home: normalizeSchool(homeRaw),
-    away: normalizeSchool(awayRaw),
+    home: homeNormalized,
+    away: awayNormalized,
     kickoffISO: toIsoOrNull(kickoffCandidate),
   };
 };
