@@ -30,7 +30,12 @@ const toIsoOrNull = (value?: string | null): string | null => {
   return dt.toISOString();
 };
 
-const mapGame = (season: number, seasonType: SeasonType, raw: Record<string, unknown>): CfbGame | null => {
+const mapGame = (
+  season: number,
+  seasonType: SeasonType,
+  raw: Record<string, unknown>,
+  debug = false,
+): CfbGame | null => {
   const week = Number((raw as { week?: unknown }).week ?? 0);
   const homeRaw = String(
     (raw as { home_team?: unknown }).home_team ?? (raw as { home?: unknown }).home ?? "",
@@ -45,15 +50,20 @@ const mapGame = (season: number, seasonType: SeasonType, raw: Record<string, unk
   const homeCanonical = canonicalTeam(homeNormalized);
   const awayCanonical = canonicalTeam(awayNormalized);
 
-  // eslint-disable-next-line no-console
-  console.log("mapGame normalization", {
-    homeRaw,
-    awayRaw,
-    homeNormalized,
-    awayNormalized,
-    homeCanonical,
-    awayCanonical,
-  });
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.debug("[cfbd] mapGame normalization", {
+      season,
+      seasonType,
+      week,
+      homeRaw,
+      awayRaw,
+      homeNormalized,
+      awayNormalized,
+      homeCanonical,
+      awayCanonical,
+    });
+  }
 
   const kickoffCandidate =
     (raw as { start_date?: unknown }).start_date
@@ -89,6 +99,16 @@ export async function getCfbSeasonSlate(
   if (cached?.length) {
     const copy = [...cached];
     copy.sort(sortGames);
+    if (debug) {
+      // eslint-disable-next-line no-console
+      console.log("[cfbd] slate summary", {
+        season,
+        seasonType,
+        slateLength: copy.length,
+        status: "cache",
+        error: undefined,
+      });
+    }
     return { slate: copy, provider: "cfbd" };
   }
 
@@ -117,6 +137,14 @@ export async function getCfbSeasonSlate(
     if (debug) {
       // eslint-disable-next-line no-console
       console.error("CFBD slate fetch failed", { season, seasonType, status, sampleBody });
+      // eslint-disable-next-line no-console
+      console.log("[cfbd] slate summary", {
+        season,
+        seasonType,
+        slateLength: 0,
+        status,
+        error: `CFBD ${status}: ${sampleBody}`,
+      });
     }
     return { slate: [], provider: "cfbd", error: `CFBD ${status}: ${sampleBody}`, status };
   }
@@ -136,9 +164,25 @@ export async function getCfbSeasonSlate(
   const slate: CfbGame[] = [];
   if (Array.isArray(raw)) {
     for (const game of raw) {
-      const mapped = mapGame(season, seasonType, game as Record<string, unknown>);
+      const mapped = mapGame(season, seasonType, game as Record<string, unknown>, debug);
       if (!mapped) continue;
-      if (!canonicalTeam(mapped.home) || !canonicalTeam(mapped.away)) continue;
+      const mappedHomeCanonical = canonicalTeam(mapped.home);
+      const mappedAwayCanonical = canonicalTeam(mapped.away);
+      if (!mappedHomeCanonical || !mappedAwayCanonical) {
+        if (debug) {
+          // eslint-disable-next-line no-console
+          console.warn("[cfbd] skipped game lacking canonical mapping", {
+            season,
+            seasonType,
+            week: mapped.week,
+            home: mapped.home,
+            away: mapped.away,
+            mappedHomeCanonical,
+            mappedAwayCanonical,
+          });
+        }
+        continue;
+      }
       slate.push(mapped);
     }
   }
@@ -149,5 +193,16 @@ export async function getCfbSeasonSlate(
     await kvSet(cacheKey, sorted, CACHE_TTL_SECONDS);
   }
 
-  return { slate, provider: "cfbd" };
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log("[cfbd] slate summary", {
+      season,
+      seasonType,
+      slateLength: slate.length,
+      status,
+      error: undefined,
+    });
+  }
+
+  return { slate, provider: "cfbd", status };
 }

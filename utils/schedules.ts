@@ -12,25 +12,42 @@ const sortGames = (a: CfbGame, b: CfbGame) => {
   return 0;
 };
 
-export function filterTeamGamesFromSlate(slate: CfbGame[], requestedTeam: string): CfbGame[] {
+export function filterTeamGamesFromSlate(
+  slate: CfbGame[],
+  requestedTeam: string,
+  options?: { debug?: boolean },
+): CfbGame[] {
+  const debug = Boolean(options?.debug);
   const team = requestedTeam.trim();
-  if (!team) return [];
-  const canonical = canonicalTeam(team);
-  if (!canonical) return [];
+  if (!team) {
+    if (debug) {
+      // eslint-disable-next-line no-console
+      console.warn("[schedules] filterTeamGamesFromSlate empty team", { requestedTeam });
+    }
+    return [];
+  }
 
-  if (slate.length) {
-    const sample = slate[0];
-    const sampleHomeCanonical = sample.home ? canonicalTeam(sample.home) : "";
-    const sampleAwayCanonical = sample.away ? canonicalTeam(sample.away) : "";
+  const normalized = normalizeSchool(team);
+  const canonicalSource = normalized || team;
+  const canonical = canonicalTeam(canonicalSource);
+  if (debug || !normalized || !canonical) {
+    const sample = slate.find((game) => game.home || game.away) ?? null;
+    const sampleHomeCanonical = sample?.home ? canonicalTeam(sample.home) : "";
+    const sampleAwayCanonical = sample?.away ? canonicalTeam(sample.away) : "";
     // eslint-disable-next-line no-console
-    console.log("filterTeamGamesFromSlate canonical", {
+    console.log("[schedules] filterTeamGamesFromSlate guard", {
+      requestedTeam,
+      normalized,
       canonical,
+      sampleHome: sample?.home ?? null,
+      sampleAway: sample?.away ?? null,
       sampleHomeCanonical,
       sampleAwayCanonical,
-      sampleHome: sample.home,
-      sampleAway: sample.away,
+      slateLength: slate.length,
     });
   }
+
+  if (!canonical) return [];
 
   const strictMatches = slate.filter((game) => {
     if (!game.home || !game.away) return false;
@@ -59,30 +76,39 @@ export function filterTeamGamesFromSlate(slate: CfbGame[], requestedTeam: string
   return sorted;
 }
 
-export async function getCfbTeamSeasonGames(season: number, team: string): Promise<CfbGame[]> {
+export async function getCfbTeamSeasonGames(
+  season: number,
+  team: string,
+  options?: { debug?: boolean },
+): Promise<CfbGame[]> {
+  const debug = Boolean(options?.debug);
   const normalizedTeam = normalizeSchool(team);
   const seasonTypes: SeasonType[] = ["regular", "postseason"];
   const games: CfbGame[] = [];
-  // eslint-disable-next-line no-console
-  console.log("team normalization", { team, normalizedTeam });
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log("[schedules] team normalization", { team, normalizedTeam });
+  }
   for (const seasonType of seasonTypes) {
     try {
-      const { slate, error, status } = await getCfbSeasonSlate(season, seasonType);
-      // eslint-disable-next-line no-console
-      console.log("getCfbSeasonSlate response", {
-        season,
-        seasonType,
-        slateLength: slate.length,
-        error,
-        status,
-      });
+      const { slate, error, status } = await getCfbSeasonSlate(season, seasonType, debug);
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.log("[schedules] getCfbSeasonSlate response", {
+          season,
+          seasonType,
+          slateLength: slate.length,
+          error,
+          status,
+        });
+      }
       if (error) {
         if (status && status !== 200) {
           await getCfbSeasonSlate(season, seasonType, true);
         }
         throw new Error(error);
       }
-      const matches = filterTeamGamesFromSlate(slate, normalizedTeam);
+      const matches = filterTeamGamesFromSlate(slate, normalizedTeam, { debug });
       for (const game of matches) {
         games.push(game);
       }
