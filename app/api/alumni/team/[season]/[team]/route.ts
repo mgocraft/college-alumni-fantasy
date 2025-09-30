@@ -1,13 +1,7 @@
 import { NextResponse } from "next/server";
 import { kvGet, kvSet } from "@/lib/kv";
-import {
-  type CfbGame,
-  canonicalTeam,
-  canonicalize,
-  filterTeamGamesFromSlate,
-  getCfbSeasonSlate,
-  normalizeSchool,
-} from "@/utils/schedules";
+import { getCfbSeasonSlate, type CfbGame } from "@/utils/cfbd";
+import { canonicalTeam, canonicalize, filterTeamGamesFromSlate, normalizeSchool } from "@/utils/schedules";
 import { probeNames } from "@/utils/debugSlate";
 import {
   getWeeklyStats,
@@ -83,6 +77,7 @@ export async function GET(
   }
 
   const rawTeamParam = context.params?.team ?? "";
+  const teamRaw = decodeURIComponent(rawTeamParam || "");
   const unsluggedTeam = unslugTeamParam(rawTeamParam);
   const normalizedTeam = normalizeSchool(unsluggedTeam);
   if (!normalizedTeam) {
@@ -96,63 +91,43 @@ export async function GET(
   const cached = await kvGet<ResultRow[]>(cacheKey);
 
   try {
-    const slateErrors: Record<string, string> = {};
-    let regularSlate: CfbGame[] = [];
-    try {
-      regularSlate = await getCfbSeasonSlate(season, "regular");
-    } catch (error) {
-      slateErrors.regular = error instanceof Error ? error.message : String(error);
-      if (!cached || !cached.length) throw error;
-    }
+    const [regularResult, postseasonResult] = await Promise.all([
+      getCfbSeasonSlate(season, debug),
+      getCfbSeasonSlate(season, "postseason", debug),
+    ]);
 
-    let postseasonSlate: CfbGame[] = [];
-    try {
-      postseasonSlate = await getCfbSeasonSlate(season, "postseason");
-    } catch (error) {
-      slateErrors.postseason = error instanceof Error ? error.message : String(error);
-      postseasonSlate = [];
-    }
-
-    const slate = [...regularSlate, ...postseasonSlate];
-    const filteredSlate = slate.filter((game) => game.home && game.away);
+    const slate: CfbGame[] = [...regularResult.slate, ...postseasonResult.slate];
     const teamForFilter = unsluggedTeam || normalizedTeam;
-    const games = filterTeamGamesFromSlate(filteredSlate, teamForFilter);
+    const games = filterTeamGamesFromSlate(slate, teamForFilter);
 
-    const blankSlateRows = slate.length - filteredSlate.length;
+    const providerUsed: "cfbd" = "cfbd";
 
     const meta: Record<string, unknown> = {
       requestedSlug: rawTeamParam,
       requestedTeam: unsluggedTeam,
       team: normalizedTeam,
       slateCount: slate.length,
-      filteredSlateCount: filteredSlate.length,
-      blankSlateRows,
+      slateRegularCount: regularResult.slate.length,
+      slatePostseasonCount: postseasonResult.slate.length,
+      cfbdStatus: regularResult.status,
+      cfbdErr: regularResult.error,
+      cfbdPostStatus: postseasonResult.status,
+      cfbdPostErr: postseasonResult.error,
       matched: games.length,
+      providerUsed,
+      requestedTeamOriginal: teamRaw,
+      teamCanonical: canonicalTeam(teamForFilter),
     };
 
     if (debug) {
-      const probe = slate
-        .filter(
-          (g) => /alab/i.test(g.home) || /alab/i.test(g.away) || /ohio/i.test(g.home) || /ohio/i.test(g.away),
-        )
-        .slice(0, 5)
-        .map((g) => ({ week: g.week, home: g.home, away: g.away }));
-      const canon = {
-        requested: canonicalize(teamForFilter),
-        sampleHome0: canonicalize(probe[0]?.home || ""),
-        sampleAway0: canonicalize(probe[0]?.away || ""),
-      };
-      meta.slateBreakdown = {
-        regular: regularSlate.length,
-        postseason: postseasonSlate.length,
-      };
       meta.firstGames = games.slice(0, 3);
-      const canonicalRequested = canonicalTeam(teamForFilter);
-      meta.slateErrors = Object.keys(slateErrors).length ? slateErrors : undefined;
-      meta.probe = probe;
+      meta.probe = {
+        alabama: probeNames(slate, "alab"),
+        ohio: probeNames(slate, "ohio"),
+      };
       meta.canon = {
-        ...canon,
-        requestedTeam: canonicalRequested,
+        requested: canonicalize(teamForFilter),
+        requestedTeam: canonicalTeam(teamForFilter),
       };
     }
 
@@ -161,14 +136,15 @@ export async function GET(
         alabama: probeNames(slate, "alab"),
         ohio: probeNames(slate, "ohio"),
       };
+      const metaWithProbe = { ...meta, matched: 0, probe };
       if (cached && cached.length) {
         return NextResponse.json(
-          { team: normalizedTeam, season, rows: cached, cached: true, meta: { ...meta, matched: 0, probe } },
+          { team: normalizedTeam, season, rows: cached, cached: true, meta: metaWithProbe },
           { headers: buildHeaders() },
         );
       }
       return NextResponse.json(
-        { team: normalizedTeam, season, rows: [], meta: { ...meta, matched: 0, probe } },
+        { team: normalizedTeam, season, rows: [], meta: metaWithProbe },
         { headers: buildHeaders() },
       );
     }
