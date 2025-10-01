@@ -68,11 +68,6 @@ export default function MatchupsPage() {
         Defense stats not posted yet; check back later.
       </div>
     )}
-    {defense === 'approx' && !defenseStatus.message && defenseStatus.showApproxBadge && (
-      <div className="badge" style={{ marginTop: 8, background: '#facc15', color: '#0b1220' }}>
-        Approx mode (opponent offense)
-      </div>
-    )}
     {loading && <div>Simulating…</div>}
     {error && <div style={{ color:'salmon' }}><b>Error:</b> {error}</div>}
     {data && (<div style={{ marginTop:16 }}>

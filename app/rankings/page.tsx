@@ -58,11 +58,6 @@ export default function RankingsPage() {
         Defense stats not posted yet; check back later.
       </div>
     )}
-    {!defenseStatus.message && defenseStatus.showApproxBadge && (
-      <div className="badge" style={{ marginTop: 8, background: '#facc15', color: '#0b1220' }}>
-        Approx mode (opponent offense)
-      </div>
-    )}
     {loading && <div>Loading…</div>}{error && <div style={{color:'salmon'}}><b>Error:</b> {error}</div>}
     <div style={{ overflowX:'auto', marginTop:12 }}><table style={{ width:'100%', borderCollapse:'collapse' }}>
       <thead><tr><th style={{textAlign:'left'}}>Rank</th><th style={{textAlign:'left'}}>School</th><th style={{textAlign:'right'}}>Points</th><th style={{textAlign:'left'}}>Top Performers</th></tr></thead>

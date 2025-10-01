@@ -1,5 +1,6 @@
 import { aggregateByCollegeMode } from "./scoring";
 import { computeHistoricalAverages, loadWeek, NflverseAssetMissingError } from "./nflverse";
+import { computeStandings, loadRecords } from "./league";
 
 export type SeasonSummaryOptions = {
   season: number;
@@ -29,6 +30,7 @@ export type SeasonSummaryRow = {
   lastWeekPoints: number;
   managerTotal: number;
   topPlayer?: PlayerContribution;
+  record?: string;
 };
 
 export type SeasonSummary = {
@@ -157,6 +159,32 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
   }
 
   const rows: SeasonSummaryRow[] = [];
+  let recordBySchool: Map<string, string> | null = null;
+  try {
+    const records = await loadRecords();
+    if (records.length > 0) {
+      const normalizedFormat = format.toLowerCase();
+      const relevant = records.filter(
+        (record) =>
+          record.season === season &&
+          record.format.toLowerCase() === normalizedFormat &&
+          record.mode === "weekly",
+      );
+      if (relevant.length > 0) {
+        const standings = computeStandings(relevant);
+        const formatted = new Map<string, string>();
+        for (const entry of standings) {
+          const base = `${entry.wins}-${entry.losses}`;
+          const value = entry.ties > 0 ? `${base}-${entry.ties}` : base;
+          formatted.set(entry.school.toLowerCase(), value);
+        }
+        recordBySchool = formatted;
+      }
+    }
+  } catch (error) {
+    console.warn("[seasonSummary] Unable to load simulated records", error);
+  }
+
   for (const [key, entry] of schools.entries()) {
     const lastWeekPoints = lastWeekTotals.get(key) ?? 0;
     let topPlayer: PlayerContribution | undefined;
@@ -171,11 +199,12 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
       weeklyTotal: Number(entry.weeklyTotal.toFixed(2)),
       managerTotal: Number(entry.managerTotal.toFixed(2)),
       lastWeekPoints: Number(lastWeekPoints.toFixed(2)),
+      record: recordBySchool?.get(key),
       topPlayer: topPlayer
         ? {
-          name: topPlayer.name,
-          position: topPlayer.position,
-          team: topPlayer.team,
+            name: topPlayer.name,
+            position: topPlayer.position,
+            team: topPlayer.team,
           totalPoints: Number(topPlayer.totalPoints.toFixed(2)),
         }
         : undefined,
