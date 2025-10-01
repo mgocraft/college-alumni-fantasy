@@ -8,10 +8,12 @@ import {
   getRosterWithColleges,
   joinStatsToColleges,
   StatsNotAvailableError,
+  getNflSchedule,
 } from "@/utils/datasources";
 import { estimateNflWeekForDate, lastCompletedNflWeek, REGULAR_SEASON_WEEKS } from "@/utils/nflWeek";
 import type { PlayerWeekly } from "@/utils/compute";
 import type { SlateDiagnostics, SlateMatchSample } from "@/types/alumniTeam";
+import { buildNflWeekWindows, mapCfbWeekToSingleNflWeek } from "@/utils/weekMapping";
 
 export const runtime = "nodejs";
 
@@ -37,6 +39,7 @@ type PendingPayload = {
 };
 
 const CACHE_TTL_SECONDS = 60 * 60 * 24;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 const roundOne = (value: number): number => Number(value.toFixed(1));
 
@@ -168,29 +171,98 @@ export async function GET(
 
     const canonicalNormalized = canonicalTeam(normalizedTeam);
     const latestCompleted = lastCompletedNflWeek();
+    const nowMs = Date.now();
+
+    let windows: ReturnType<typeof buildNflWeekWindows> | null = null;
+    const windowLookup = new Map<string, { startISO: string; endISO: string; gameTypes: string[] }>();
+    const mappingCache = new Map<number, { season: number; week: number }>();
+
+    try {
+      const schedule = await getNflSchedule(season);
+      windows = buildNflWeekWindows(schedule);
+      for (const window of windows) {
+        const end = new Date(window.windowEndUTC);
+        const start = new Date(end.getTime() - WEEK_MS);
+        windowLookup.set(`${window.season}-${window.week}`, {
+          startISO: start.toISOString(),
+          endISO: end.toISOString(),
+          gameTypes: window.gameTypes,
+        });
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("[alumni] failed to load NFL schedule for mapping", error);
+    }
+
+    const mapWeek = (cfbWeek: number) => {
+      if (!windows) return null;
+      const cachedMapping = mappingCache.get(cfbWeek);
+      if (cachedMapping) return cachedMapping;
+      const weekGames = slate.filter(
+        (candidate): candidate is CfbGame & { kickoffISO: string } =>
+          candidate.seasonType === "regular" &&
+          candidate.week === cfbWeek &&
+          typeof candidate.kickoffISO === "string" &&
+          candidate.kickoffISO.length > 0,
+      );
+      const mappedGames = weekGames.map((game) => ({ kickoffISO: game.kickoffISO }));
+      const mapping = mapCfbWeekToSingleNflWeek(mappedGames, windows, cfbWeek, season - 1);
+      mappingCache.set(cfbWeek, mapping);
+      return mapping;
+    };
 
     const contexts = games.map((game) => {
       const kickoff = game.kickoffISO ? new Date(game.kickoffISO) : new Date(Number.NaN);
       const estimate = estimateNflWeekForDate(game.season, kickoff, game.week);
       const isHome = canonicalTeam(game.home) === canonicalNormalized;
       const opponent = isHome ? game.away : game.home;
+      const mapping = mapWeek(game.week);
+      let nflSeason = mapping ? mapping.season : game.season;
+      let nflWeek = mapping ? mapping.week : estimate.week;
+      let nflWindowStart = estimate.startISO;
+      let nflWindowEnd = estimate.endISO;
+      let shouldFetch = false;
+
+      if (mapping) {
+        const windowKey = `${mapping.season}-${mapping.week}`;
+        const window = windowLookup.get(windowKey);
+        if (window) {
+          nflWindowStart = window.startISO;
+          nflWindowEnd = window.endISO;
+          shouldFetch = new Date(window.endISO).getTime() <= nowMs;
+        } else {
+          shouldFetch =
+            mapping.season < latestCompleted.season ||
+            (mapping.season === latestCompleted.season && mapping.week <= latestCompleted.week);
+        }
+      }
+
       const rawWeek = estimate.rawWeek;
-      const withinRegularSeason = Number.isFinite(rawWeek)
-        ? rawWeek >= 1 && rawWeek <= REGULAR_SEASON_WEEKS
-        : false;
-      const withinCompletedWindow =
-        game.season < latestCompleted.season ||
-        (game.season === latestCompleted.season && estimate.week <= latestCompleted.week);
-      const shouldFetch = withinRegularSeason && withinCompletedWindow;
-      const statsKey = shouldFetch ? `${game.season}:${estimate.week}` : null;
+      if (!shouldFetch) {
+        const withinRegularSeason = Number.isFinite(rawWeek)
+          ? rawWeek >= 1 && rawWeek <= REGULAR_SEASON_WEEKS
+          : false;
+        const withinCompletedWindow =
+          game.season < latestCompleted.season ||
+          (game.season === latestCompleted.season && estimate.week <= latestCompleted.week);
+        if (withinRegularSeason && withinCompletedWindow) {
+          shouldFetch = true;
+          nflSeason = game.season;
+          nflWeek = estimate.week;
+          nflWindowStart = estimate.startISO;
+          nflWindowEnd = estimate.endISO;
+        }
+      }
+
+      const statsKey = shouldFetch ? `${nflSeason}:${nflWeek}` : null;
       return {
         game,
         isHome,
         opponent,
-        nflSeason: game.season,
-        nflWeek: estimate.week,
-        nflWindowStart: estimate.startISO,
-        nflWindowEnd: estimate.endISO,
+        nflSeason,
+        nflWeek,
+        nflWindowStart,
+        nflWindowEnd,
         rawWeek,
         shouldFetch,
         statsKey,
