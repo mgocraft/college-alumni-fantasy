@@ -9,7 +9,7 @@ import {
   joinStatsToColleges,
   StatsNotAvailableError,
 } from "@/utils/datasources";
-import { lastCompletedNflWeek, nflWeekWindowUtc } from "@/utils/nflWeek";
+import { estimateNflWeekForDate, lastCompletedNflWeek, REGULAR_SEASON_WEEKS } from "@/utils/nflWeek";
 import type { PlayerWeekly } from "@/utils/compute";
 import type { SlateDiagnostics, SlateMatchSample } from "@/types/alumniTeam";
 
@@ -20,9 +20,9 @@ type ResultRow = {
   cfbDate: string;
   homeAway: "Home" | "Away";
   opponent: string;
-  usPts: number;
-  oppPts: number;
-  result: "W" | "L" | "T";
+  usPts: number | null;
+  oppPts: number | null;
+  result: "W" | "L" | "T" | null;
   nflSeason: number;
   nflWeek: number;
   nflWindowStart: string;
@@ -166,68 +166,139 @@ export async function GET(
       );
     }
 
-    if (cached && cached.length) {
-      return NextResponse.json(
-        { team: normalizedTeam, season, rows: cached, cached: true, meta },
-        { headers: buildHeaders() },
-      );
-    }
-
-    const { season: nflSeason, week: nflWeek } = lastCompletedNflWeek();
-    const { startISO, endISO } = nflWeekWindowUtc(nflSeason, nflWeek);
-
-    let stats;
-    try {
-      stats = await getWeeklyStats(nflSeason, nflWeek, "ppr");
-    } catch (error) {
-      if (error instanceof StatsNotAvailableError) {
-        const payload: PendingPayload = {
-          status: "pending",
-          message: "NFL weekly player stats not yet published",
-          season: error.season,
-          week: error.week,
-        };
-        return NextResponse.json(meta ? { ...payload, meta } : payload, {
-          status: 202,
-          headers: buildHeaders(),
-        });
-      }
-      throw error;
-    }
-
-    const roster = await getRosterWithColleges(nflSeason);
-    const joined = await joinStatsToColleges(stats, roster);
-
-    const rows: ResultRow[] = [];
     const canonicalNormalized = canonicalTeam(normalizedTeam);
+    const latestCompleted = lastCompletedNflWeek();
 
-    for (const game of games) {
-      const totals = sumForMatchup(joined.rows, game.home, game.away);
+    const contexts = games.map((game) => {
+      const kickoff = game.kickoffISO ? new Date(game.kickoffISO) : new Date(Number.NaN);
+      const estimate = estimateNflWeekForDate(game.season, kickoff, game.week);
       const isHome = canonicalTeam(game.home) === canonicalNormalized;
       const opponent = isHome ? game.away : game.home;
-      const usRaw = isHome ? totals.home : totals.away;
-      const oppRaw = isHome ? totals.away : totals.home;
-      const usPts = roundOne(usRaw);
-      const oppPts = roundOne(oppRaw);
-      const result: ResultRow["result"] = usPts === oppPts ? "T" : usPts > oppPts ? "W" : "L";
-      rows.push({
-        cfbWeek: game.week,
-        cfbDate: game.kickoffISO ? game.kickoffISO.slice(0, 10) : "",
-        homeAway: isHome ? "Home" : "Away",
+      const rawWeek = estimate.rawWeek;
+      const withinRegularSeason = Number.isFinite(rawWeek)
+        ? rawWeek >= 1 && rawWeek <= REGULAR_SEASON_WEEKS
+        : false;
+      const withinCompletedWindow =
+        game.season < latestCompleted.season ||
+        (game.season === latestCompleted.season && estimate.week <= latestCompleted.week);
+      const shouldFetch = withinRegularSeason && withinCompletedWindow;
+      const statsKey = shouldFetch ? `${game.season}:${estimate.week}` : null;
+      return {
+        game,
+        isHome,
         opponent,
+        nflSeason: game.season,
+        nflWeek: estimate.week,
+        nflWindowStart: estimate.startISO,
+        nflWindowEnd: estimate.endISO,
+        rawWeek,
+        shouldFetch,
+        statsKey,
+      };
+    });
+
+    if (cached && cached.length) {
+      const cacheIndex = new Map<string, ResultRow>();
+      for (const row of cached) {
+        const signature = `${row.cfbWeek}:${row.homeAway}:${row.opponent}`;
+        if (!cacheIndex.has(signature)) cacheIndex.set(signature, row);
+      }
+      const needsRefresh = contexts.some((ctx) => {
+        if (!ctx.shouldFetch) return false;
+        const signature = `${ctx.game.week}:${ctx.isHome ? "Home" : "Away"}:${ctx.opponent}`;
+        const cachedRow = cacheIndex.get(signature);
+        return !cachedRow || cachedRow.usPts === null || cachedRow.oppPts === null;
+      });
+      if (!needsRefresh) {
+        return NextResponse.json(
+          { team: normalizedTeam, season, rows: cached, cached: true, meta },
+          { headers: buildHeaders() },
+        );
+      }
+    }
+
+    const rosterCache = new Map<number, Awaited<ReturnType<typeof getRosterWithColleges>>>();
+    const weeklyRows = new Map<string, PlayerWeekly[]>();
+    const targets = Array.from(new Set(contexts.map((ctx) => ctx.statsKey).filter(Boolean))) as string[];
+    const pendingErrors: StatsNotAvailableError[] = [];
+
+    for (const key of targets) {
+      const [seasonPart, weekPart] = key.split(":");
+      const targetSeason = Number.parseInt(seasonPart, 10);
+      const targetWeek = Number.parseInt(weekPart, 10);
+      try {
+        const stats = await getWeeklyStats(targetSeason, targetWeek, "ppr");
+        let roster = rosterCache.get(targetSeason);
+        if (!roster) {
+          roster = await getRosterWithColleges(targetSeason);
+          rosterCache.set(targetSeason, roster);
+        }
+        const joined = await joinStatsToColleges(stats, roster);
+        weeklyRows.set(key, joined.rows);
+      } catch (error) {
+        if (error instanceof StatsNotAvailableError) {
+          pendingErrors.push(error);
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (!weeklyRows.size && pendingErrors.length) {
+      const pending = pendingErrors[0];
+      const payload: PendingPayload = {
+        status: "pending",
+        message: "NFL weekly player stats not yet published",
+        season: pending.season,
+        week: pending.week,
+      };
+      return NextResponse.json(meta ? { ...payload, meta } : payload, {
+        status: 202,
+        headers: buildHeaders(),
+      });
+    }
+
+    const rows: ResultRow[] = [];
+    const completionFlags: boolean[] = [];
+
+    for (const ctx of contexts) {
+      const statsKey = ctx.statsKey;
+      const weekRows = statsKey ? weeklyRows.get(statsKey) : undefined;
+      let usPts: number | null = null;
+      let oppPts: number | null = null;
+      let result: ResultRow["result"] = null;
+
+      if (weekRows && weekRows.length) {
+        const totals = sumForMatchup(weekRows, ctx.game.home, ctx.game.away);
+        const usRaw = ctx.isHome ? totals.home : totals.away;
+        const oppRaw = ctx.isHome ? totals.away : totals.home;
+        usPts = roundOne(usRaw);
+        oppPts = roundOne(oppRaw);
+        result = usPts === oppPts ? "T" : usPts > oppPts ? "W" : "L";
+      }
+
+      rows.push({
+        cfbWeek: ctx.game.week,
+        cfbDate: ctx.game.kickoffISO ? ctx.game.kickoffISO.slice(0, 10) : "",
+        homeAway: ctx.isHome ? "Home" : "Away",
+        opponent: ctx.opponent,
         usPts,
         oppPts,
         result,
-        nflSeason,
-        nflWeek,
-        nflWindowStart: startISO,
-        nflWindowEnd: endISO,
+        nflSeason: ctx.nflSeason,
+        nflWeek: ctx.nflWeek,
+        nflWindowStart: ctx.nflWindowStart,
+        nflWindowEnd: ctx.nflWindowEnd,
       });
+      completionFlags.push(usPts !== null && oppPts !== null);
     }
 
     rows.sort((a, b) => a.cfbWeek - b.cfbWeek || a.cfbDate.localeCompare(b.cfbDate));
 
-    await kvSet(cacheKey, rows, CACHE_TTL_SECONDS);
+    const shouldCache = contexts.every((ctx, index) => !ctx.shouldFetch || completionFlags[index]);
+    if (shouldCache && rows.length) {
+      await kvSet(cacheKey, rows, CACHE_TTL_SECONDS);
+    }
 
     return NextResponse.json({ team: normalizedTeam, season, rows, cached: false, meta }, { headers: buildHeaders() });
   } catch (error) {
