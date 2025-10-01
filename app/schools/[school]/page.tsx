@@ -414,11 +414,6 @@ export default function SchoolDetail({ params }: { params: { school: string } })
             Defense stats not posted yet; check back later.
           </div>
         )}
-        {defense === 'approx' && !defenseStatus.message && defenseStatus.showApproxBadge && (
-          <div className="badge" style={{ marginTop: 8, background: '#facc15', color: '#0b1220' }}>
-            Approx mode (opponent offense)
-          </div>
-        )}
         <div style={{ width:'100%', height:320, background:'#0b1220', borderRadius:12, padding:12 }}>
           <ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="week"/><YAxis/><Tooltip/><Line type="monotone" dataKey="points" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer>
         </div>

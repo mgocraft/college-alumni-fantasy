@@ -27,7 +27,6 @@ export default async function HomePage() {
   let error: string | null = null;
   let summary: Awaited<ReturnType<typeof loadSeasonSummary>> | null = null;
   let defenseBanner: string | null = null;
-  let showApproxBadge = false;
   try {
     summary = await loadSeasonSummary({
       season: DEFAULT_SEASON,
@@ -44,14 +43,11 @@ export default async function HomePage() {
     const defense = await fetchDefenseApprox({ season: DEFAULT_SEASON });
     if (defense.rows.length === 0) {
       defenseBanner = "Defense stats not posted yet; check back later.";
-    } else {
-      showApproxBadge = defense.mode === "approx-opponent-offense";
-      if (defense.rows.every((row) => Number(row.score) === 0)) {
-        console.warn("[home] Defense approx returned zero scores", {
-          season: DEFAULT_SEASON,
-          week: defense.week,
-        });
-      }
+    } else if (defense.rows.every((row) => Number(row.score) === 0)) {
+      console.warn("[home] Defense approx returned zero scores", {
+        season: DEFAULT_SEASON,
+        week: defense.week,
+      });
     }
   } catch (err) {
     if (err instanceof DefenseUnavailableError) {
@@ -69,15 +65,9 @@ export default async function HomePage() {
     <div className="card">
       <h1>College Alumni Fantasy</h1>
       <p>Weekly fantasy points by <b>college</b> from pro players.</p>
-      <p className="badge">nflverse data</p>
       {defenseBanner && (
         <p className="badge" style={{ marginTop: 8, background: "#f97316", color: "#0b1220" }}>
           {defenseBanner}
-        </p>
-      )}
-      {!defenseBanner && showApproxBadge && (
-        <p className="badge" style={{ marginTop: 8, background: "#facc15", color: "#0b1220" }}>
-          Approx mode (opponent offense)
         </p>
       )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16 }}>
@@ -103,6 +93,7 @@ export default async function HomePage() {
                   <th style={{ textAlign: "right" }}>Season Points</th>
                   <th style={{ textAlign: "right" }}>{lastWeekLabel}</th>
                   <th style={{ textAlign: "right" }}>Manager Mode Points</th>
+                  <th style={{ textAlign: "right" }}>Record</th>
                   <th style={{ textAlign: "left" }}>Top Scoring Player</th>
                 </tr>
               </thead>
@@ -118,6 +109,7 @@ export default async function HomePage() {
                     <td style={{ textAlign: "right" }}>{formatPoints(row.weeklyTotal)}</td>
                     <td style={{ textAlign: "right" }}>{formatPoints(row.lastWeekPoints)}</td>
                     <td style={{ textAlign: "right" }}>{formatPoints(row.managerTotal)}</td>
+                    <td style={{ textAlign: "right" }}>{row.record ?? "—"}</td>
                     <td>{formatTopPlayer(row.topPlayer)}</td>
                   </tr>
                 ))}
