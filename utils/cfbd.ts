@@ -4,11 +4,21 @@ import { canonicalTeam, normalizeSchool } from "./schoolNames";
 export type SeasonType = "regular" | "postseason";
 
 export type CfbGame = {
+  id: number | null;
   season: number;
   week: number;
   seasonType: SeasonType;
   home: string;
   away: string;
+  homePoints: number | null;
+  awayPoints: number | null;
+  venue: string | null;
+  neutralSite: boolean | null;
+  conferenceGame: boolean | null;
+  startTimeTBD: boolean | null;
+  excitementIndex: number | null;
+  highlights: string | null;
+  notes: string | null;
   kickoffISO: string | null;
 };
 
@@ -36,12 +46,48 @@ const mapGame = (
   raw: Record<string, unknown>,
   debug = false,
 ): CfbGame | null => {
-  const week = Number((raw as { week?: unknown }).week ?? 0);
+  const g = raw as {
+    id?: number;
+    season?: number;
+    week?: number;
+    seasonType?: string;
+    startDate?: string;
+    startTime?: string;
+    startTimeTBD?: boolean;
+    neutralSite?: boolean;
+    conferenceGame?: boolean;
+    attendance?: number;
+    venueId?: number;
+    venue?: string;
+    homeTeam?: string;
+    homePoints?: number;
+    homePostgameWinProbability?: number;
+    homePregameElo?: number;
+    homePostgameElo?: number;
+    homeLineScores?: number[];
+    awayTeam?: string;
+    awayPoints?: number;
+    awayPostgameWinProbability?: number;
+    awayPregameElo?: number;
+    awayPostgameElo?: number;
+    awayLineScores?: number[];
+    excitementIndex?: number;
+    highlights?: string;
+    notes?: string;
+  };
+
+  const week = Number(g.week ?? (raw as { week?: unknown }).week ?? 0);
   const homeRaw = String(
-    (raw as { home_team?: unknown }).home_team ?? (raw as { home?: unknown }).home ?? "",
+    g.homeTeam ??
+      (raw as { home_team?: unknown }).home_team ??
+      (raw as { home?: unknown }).home ??
+      "",
   ).trim();
   const awayRaw = String(
-    (raw as { away_team?: unknown }).away_team ?? (raw as { away?: unknown }).away ?? "",
+    g.awayTeam ??
+      (raw as { away_team?: unknown }).away_team ??
+      (raw as { away?: unknown }).away ??
+      "",
   ).trim();
   if (!homeRaw || !awayRaw) return null;
 
@@ -66,20 +112,34 @@ const mapGame = (
   }
 
   const kickoffCandidate =
-    (raw as { start_date?: unknown }).start_date
-      ? String((raw as { start_date?: unknown }).start_date)
-      : (raw as { start_time?: unknown }).start_time
-        ? String((raw as { start_time?: unknown }).start_time)
-        : (raw as { kickoff?: unknown }).kickoff
-          ? String((raw as { kickoff?: unknown }).kickoff)
-          : null;
+    (typeof g.startDate === "string" && g.startDate.trim().length)
+      ? g.startDate
+      : (raw as { start_date?: unknown }).start_date
+          ? String((raw as { start_date?: unknown }).start_date)
+          : (typeof g.startTime === "string" && g.startTime.trim().length)
+              ? g.startTime
+              : (raw as { start_time?: unknown }).start_time
+                  ? String((raw as { start_time?: unknown }).start_time)
+                  : (raw as { kickoff?: unknown }).kickoff
+                      ? String((raw as { kickoff?: unknown }).kickoff)
+                      : null;
 
   return {
+    id: typeof g.id === "number" ? g.id : null,
     season,
     week,
     seasonType,
     home: homeNormalized,
     away: awayNormalized,
+    homePoints: typeof g.homePoints === "number" ? g.homePoints : null,
+    awayPoints: typeof g.awayPoints === "number" ? g.awayPoints : null,
+    venue: typeof g.venue === "string" ? g.venue : null,
+    neutralSite: typeof g.neutralSite === "boolean" ? g.neutralSite : null,
+    conferenceGame: typeof g.conferenceGame === "boolean" ? g.conferenceGame : null,
+    startTimeTBD: typeof g.startTimeTBD === "boolean" ? g.startTimeTBD : null,
+    excitementIndex: typeof g.excitementIndex === "number" ? g.excitementIndex : null,
+    highlights: typeof g.highlights === "string" ? g.highlights : null,
+    notes: typeof g.notes === "string" ? g.notes : null,
     kickoffISO: toIsoOrNull(kickoffCandidate),
   };
 };
