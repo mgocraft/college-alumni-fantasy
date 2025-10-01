@@ -594,6 +594,9 @@ const GAME_TYPE_WHITELIST = new Set([
   "CONF",
   "CON",
   "SB",
+  "PRE",
+  "PRESEASON",
+  "preseason",
 ]);
 
 export async function getNflSchedule(season: number): Promise<NflScheduleGame[]> {
