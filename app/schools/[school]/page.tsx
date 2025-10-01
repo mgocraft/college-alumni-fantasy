@@ -39,9 +39,9 @@ type GameResultRow = {
   cfbDate: string;
   homeAway: "Home" | "Away";
   opponent: string;
-  usPts: number;
-  oppPts: number;
-  result: "W" | "L" | "T";
+  usPts: number | null;
+  oppPts: number | null;
+  result: "W" | "L" | "T" | null;
   nflSeason: number;
   nflWeek: number;
   nflWindowStart: string;
@@ -194,6 +194,12 @@ export default function SchoolDetail({ params }: { params: { school: string } })
   const windowLabel = (start: string, end: string) => {
     const format = (value: string) => (value ? value.replace('T', ' ').slice(0, 16) : '—');
     return `${format(start)} → ${format(end)}`;
+  };
+  const formatGamePoints = (row: GameResultRow) => {
+    if (typeof row.usPts === 'number' && typeof row.oppPts === 'number' && row.result) {
+      return `${row.usPts.toFixed(1)}–${row.oppPts.toFixed(1)} (${row.result})`;
+    }
+    return '—';
   };
   const gameResultsSeasonLabel = gameResults?.season ?? (Number.isFinite(parsedSeason) ? parsedSeason : new Date().getFullYear());
   const debugMeta = gameResults?.meta ?? gameResultsPending?.meta;
@@ -358,7 +364,7 @@ export default function SchoolDetail({ params }: { params: { school: string } })
                   <td style={{ padding:'6px 8px' }}>{row.homeAway}</td>
                   <td style={{ padding:'6px 8px' }}>{row.opponent}</td>
                   <td style={{ padding:'6px 8px', textAlign:'right' }}>
-                    {row.usPts.toFixed(1)}–{row.oppPts.toFixed(1)} ({row.result})
+                    {formatGamePoints(row)}
                   </td>
                   <td style={{ padding:'6px 8px' }}>{row.nflSeason}-W{row.nflWeek}</td>
                   <td style={{ padding:'6px 8px' }}>{windowLabel(row.nflWindowStart, row.nflWindowEnd)}</td>

@@ -1,4 +1,4 @@
-const REGULAR_SEASON_WEEKS = 18;
+export const REGULAR_SEASON_WEEKS = 18;
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
 const toUtcDate = (year: number, monthIndex: number, day: number, hours = 0): Date => {
@@ -64,5 +64,31 @@ export function nflWeekWindowUtc(
   const end = new Date(cutoff.getTime() + (clampedWeek - 1) * MS_PER_WEEK);
   const start = new Date(end.getTime() - MS_PER_WEEK);
   return { startISO: start.toISOString(), endISO: end.toISOString() };
+}
+
+export type EstimatedNflWeek = {
+  week: number;
+  rawWeek: number;
+  startISO: string;
+  endISO: string;
+};
+
+export function estimateNflWeekForDate(
+  season: number,
+  kickoff: Date,
+  fallbackWeek = 1,
+): EstimatedNflWeek {
+  const fallback = clampWeek(fallbackWeek);
+  if (Number.isNaN(kickoff.getTime())) {
+    const window = nflWeekWindowUtc(season, fallback);
+    return { week: fallback, rawWeek: Number.NaN, startISO: window.startISO, endISO: window.endISO };
+  }
+
+  const weekOneWindow = nflWeekWindowUtc(season, 1);
+  const weekOneStart = new Date(weekOneWindow.startISO);
+  const rawWeek = Math.floor((kickoff.getTime() - weekOneStart.getTime()) / MS_PER_WEEK) + 1;
+  const week = clampWeek(rawWeek);
+  const { startISO, endISO } = nflWeekWindowUtc(season, week);
+  return { week, rawWeek, startISO, endISO };
 }
 
