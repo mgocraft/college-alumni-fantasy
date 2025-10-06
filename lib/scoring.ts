@@ -1,6 +1,7 @@
 
 import type { Leader, SchoolAggregate } from "./types";
 import { normalizeTeamAbbreviation, type DefenseWeek } from "./nflverse";
+import { normalizeSchool as normalizeCollegeName } from "@/utils/schoolNames";
 
 type Mode = 'weekly' | 'avg';
 type DefenseMode = 'none' | 'approx';
@@ -49,7 +50,7 @@ const extractCollegeNames = (college: Leader['college']): string[] => {
   return result;
 };
 
-const normalizeCollegeName = (value: string): string => {
+const sanitizeCollegeValue = (value: string): string => {
   if (!value) return 'Unknown';
   const lower = value.toLowerCase();
   return lower === 'unknown' ? 'Unknown' : value;
@@ -65,12 +66,15 @@ export async function aggregateByCollegeMode(
   // group by college
   const groups = new Map<string, Leader[]>();
   for (const leader of leaders) {
-    const extracted = extractCollegeNames(leader.college).map(normalizeCollegeName);
+    const extracted = extractCollegeNames(leader.college).map(sanitizeCollegeValue);
     const colleges = extracted.filter((name, _idx, arr) => name !== 'Unknown' || arr.length === 1);
     const targets = colleges.length ? colleges : ['Unknown'];
     for (const college of targets) {
-      if (!groups.has(college)) groups.set(college, []);
-      groups.get(college)!.push({ ...leader, college } as Leader);
+      const normalized = normalizeCollegeName(college);
+      const trimmed = college.trim();
+      const targetName = normalized || (trimmed ? trimmed : "Unknown");
+      if (!groups.has(targetName)) groups.set(targetName, []);
+      groups.get(targetName)!.push({ ...leader, college: targetName } as Leader);
     }
   }
 

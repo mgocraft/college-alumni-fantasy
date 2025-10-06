@@ -45,19 +45,22 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const roundOne = (value: number): number => Number(value.toFixed(1));
 
 const sumForMatchup = (rows: PlayerWeekly[], home: string, away: string) => {
-  const want = new Set([home, away]);
-  const totals = new Map<string, number>();
-  totals.set(home, 0);
-  totals.set(away, 0);
+  const homeKey = canonicalTeam(home);
+  const awayKey = canonicalTeam(away);
+  const totals = new Map<string, { label: string; total: number }>();
+  totals.set(homeKey, { label: home, total: 0 });
+  totals.set(awayKey, { label: away, total: 0 });
   for (const row of rows) {
     const college = row.college;
-    if (!college || !want.has(college)) continue;
-    const current = totals.get(college) ?? 0;
-    totals.set(college, current + (row.points ?? 0));
+    if (!college) continue;
+    const key = canonicalTeam(college);
+    const entry = totals.get(key);
+    if (!entry) continue;
+    entry.total += row.points ?? 0;
   }
   return {
-    home: totals.get(home) ?? 0,
-    away: totals.get(away) ?? 0,
+    home: totals.get(homeKey)?.total ?? 0,
+    away: totals.get(awayKey)?.total ?? 0,
   };
 };
 

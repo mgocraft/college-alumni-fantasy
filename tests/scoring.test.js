@@ -83,3 +83,42 @@ test('aggregateByCollegeMode credits defense points when team aliases differ', a
   const contributorLabels = defRow.meta.contributors.map((entry) => entry.label);
   assert.ok(contributorLabels.some((label) => label.includes('Corner')), 'expected named contributor');
 });
+
+test('aggregateByCollegeMode normalizes school names consistently', async () => {
+  const leaders = [
+    { player_id: '200', full_name: 'QB Buckeye', position: 'QB', team: 'PHI', points: 20, college: 'The Ohio State' },
+    { player_id: '201', full_name: 'RB Scarlet', position: 'RB', team: 'PHI', points: 15, college: 'Ohio State Buckeyes' },
+    { player_id: '202', full_name: 'RB Gray', position: 'RB', team: 'PHI', points: 12, college: 'Ohio St.' },
+    { player_id: '203', full_name: 'WR Olave', position: 'WR', team: 'PHI', points: 11, college: 'Ohio State University' },
+    { player_id: '204', full_name: 'WR Smith', position: 'WR', team: 'PHI', points: 9, college: 'Ohio State' },
+    { player_id: '205', full_name: 'TE Bosa', position: 'TE', team: 'PHI', points: 7, college: 'Ohio State Buckeyes' },
+    { player_id: '210', full_name: 'QB Cane', position: 'QB', team: 'MIA', points: 19, college: 'Miami Hurricanes' },
+    { player_id: '211', full_name: 'RB Orange', position: 'RB', team: 'MIA', points: 14, college: 'Miami' },
+    { player_id: '212', full_name: 'RB Green', position: 'RB', team: 'MIA', points: 13, college: 'Miami (FL)' },
+    { player_id: '213', full_name: 'WR Teal', position: 'WR', team: 'MIA', points: 10, college: 'Miami Fla' },
+    { player_id: '214', full_name: 'WR Aqua', position: 'WR', team: 'MIA', points: 9, college: 'Miami FL' },
+    { player_id: '215', full_name: 'TE Wave', position: 'TE', team: 'MIA', points: 6, college: 'Miami (FL)' },
+  ];
+
+  const results = await aggregateByCollegeMode(leaders, 1, 'ppr', 'weekly', undefined, {
+    includeK: false,
+    defense: 'none',
+  });
+
+  const schoolNames = results.map((row) => row.school).sort();
+  assert.deepEqual(schoolNames, ['Miami (FL)', 'Ohio State']);
+
+  const ohioState = results.find((row) => row.school === 'Ohio State');
+  assert.ok(ohioState, 'expected Ohio State row');
+  assert.ok(
+    ohioState.performers.every((player) => player.college === 'Ohio State'),
+    'expected Ohio State performers to use normalized name',
+  );
+
+  const miami = results.find((row) => row.school === 'Miami (FL)');
+  assert.ok(miami, 'expected Miami row');
+  assert.ok(
+    miami.performers.every((player) => player.college === 'Miami (FL)'),
+    'expected Miami performers to use normalized name',
+  );
+});
