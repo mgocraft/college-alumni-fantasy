@@ -25,6 +25,7 @@ type ResultRow = {
   usPts: number | null;
   oppPts: number | null;
   result: "W" | "L" | "T" | null;
+  status: "final" | "pending" | "scheduled";
   nflSeason: number;
   nflWeek: number;
   nflWindowStart: string;
@@ -221,32 +222,83 @@ export async function GET(
       let nflWeek = mapping ? mapping.week : estimate.week;
       let nflWindowStart = estimate.startISO;
       let nflWindowEnd = estimate.endISO;
+      const rawWeek = estimate.rawWeek;
       let shouldFetch = false;
+      let isFinal = false;
+      let status: ResultRow["status"] = "scheduled";
 
       if (mapping) {
+        nflSeason = mapping.season;
+        nflWeek = mapping.week;
         const windowKey = `${mapping.season}-${mapping.week}`;
         const window = windowLookup.get(windowKey);
         if (window) {
           nflWindowStart = window.startISO;
           nflWindowEnd = window.endISO;
-          shouldFetch = new Date(window.endISO).getTime() <= nowMs;
+          const startMs = new Date(window.startISO).getTime();
+          const endMs = new Date(window.endISO).getTime();
+          if (Number.isFinite(endMs) && nowMs >= endMs) {
+            shouldFetch = true;
+            isFinal = true;
+            status = "final";
+          } else if (Number.isFinite(startMs) && nowMs >= startMs) {
+            shouldFetch = true;
+            status = "pending";
+          }
         } else {
-          shouldFetch =
+          const completed =
             mapping.season < latestCompleted.season ||
             (mapping.season === latestCompleted.season && mapping.week <= latestCompleted.week);
+          if (completed) {
+            shouldFetch = true;
+            isFinal = true;
+            status = "final";
+          } else {
+            const projected = estimateNflWeekForDate(mapping.season, kickoff, mapping.week);
+            nflWindowStart = projected.startISO;
+            nflWindowEnd = projected.endISO;
+            const startMs = new Date(nflWindowStart).getTime();
+            const endMs = new Date(nflWindowEnd).getTime();
+            if (Number.isFinite(endMs) && nowMs >= endMs) {
+              shouldFetch = true;
+              isFinal = true;
+              status = "final";
+            } else if (Number.isFinite(startMs) && nowMs >= startMs) {
+              shouldFetch = true;
+              status = "pending";
+            }
+          }
         }
       }
 
-      const rawWeek = estimate.rawWeek;
       if (!shouldFetch) {
         const withinRegularSeason = Number.isFinite(rawWeek)
           ? rawWeek >= 1 && rawWeek <= REGULAR_SEASON_WEEKS
           : false;
-        const withinCompletedWindow =
+        const startMs = new Date(nflWindowStart).getTime();
+        const endMs = new Date(nflWindowEnd).getTime();
+        const completedByEstimate =
           game.season < latestCompleted.season ||
-          (game.season === latestCompleted.season && estimate.week <= latestCompleted.week);
-        if (withinRegularSeason && withinCompletedWindow) {
+          (game.season === latestCompleted.season && estimate.week <= latestCompleted.week) ||
+          (Number.isFinite(endMs) && nowMs >= endMs);
+        if (withinRegularSeason && completedByEstimate) {
           shouldFetch = true;
+          if (Number.isFinite(endMs) && nowMs >= endMs) {
+            isFinal = true;
+            status = "final";
+          } else {
+            status = "pending";
+          }
+          nflSeason = game.season;
+          nflWeek = estimate.week;
+          nflWindowStart = estimate.startISO;
+          nflWindowEnd = estimate.endISO;
+        } else if (withinRegularSeason && Number.isFinite(startMs) && nowMs >= startMs) {
+          shouldFetch = true;
+          status = Number.isFinite(endMs) && nowMs >= endMs ? "final" : "pending";
+          if (status === "final") {
+            isFinal = true;
+          }
           nflSeason = game.season;
           nflWeek = estimate.week;
           nflWindowStart = estimate.startISO;
@@ -265,13 +317,19 @@ export async function GET(
         nflWindowEnd,
         rawWeek,
         shouldFetch,
+        isFinal,
+        status,
         statsKey,
       };
     });
 
     if (cached && cached.length) {
+      const normalizedCached = cached.map((row) => ({
+        ...row,
+        status: row.status ?? (row.result ? "final" : "scheduled"),
+      }));
       const cacheIndex = new Map<string, ResultRow>();
-      for (const row of cached) {
+      for (const row of normalizedCached) {
         const signature = `${row.cfbWeek}:${row.homeAway}:${row.opponent}`;
         if (!cacheIndex.has(signature)) cacheIndex.set(signature, row);
       }
@@ -279,11 +337,14 @@ export async function GET(
         if (!ctx.shouldFetch) return false;
         const signature = `${ctx.game.week}:${ctx.isHome ? "Home" : "Away"}:${ctx.opponent}`;
         const cachedRow = cacheIndex.get(signature);
-        return !cachedRow || cachedRow.usPts === null || cachedRow.oppPts === null;
+        if (!cachedRow) return true;
+        if (ctx.status !== "final") return true;
+        if (cachedRow.status !== "final") return true;
+        return cachedRow.usPts === null || cachedRow.oppPts === null;
       });
       if (!needsRefresh) {
         return NextResponse.json(
-          { team: normalizedTeam, season, rows: cached, cached: true, meta },
+          { team: normalizedTeam, season, rows: normalizedCached, cached: true, meta },
           { headers: buildHeaders() },
         );
       }
@@ -346,8 +407,16 @@ export async function GET(
         const oppRaw = ctx.isHome ? totals.away : totals.home;
         usPts = roundOne(usRaw);
         oppPts = roundOne(oppRaw);
-        result = usPts === oppPts ? "T" : usPts > oppPts ? "W" : "L";
+        if (ctx.isFinal && usPts !== null && oppPts !== null) {
+          result = usPts === oppPts ? "T" : usPts > oppPts ? "W" : "L";
+        }
       }
+
+      const status = ctx.isFinal
+        ? "final"
+        : usPts !== null && oppPts !== null && ctx.status === "scheduled"
+          ? "pending"
+          : ctx.status;
 
       rows.push({
         cfbWeek: ctx.game.week,
@@ -357,17 +426,22 @@ export async function GET(
         usPts,
         oppPts,
         result,
+        status,
         nflSeason: ctx.nflSeason,
         nflWeek: ctx.nflWeek,
         nflWindowStart: ctx.nflWindowStart,
         nflWindowEnd: ctx.nflWindowEnd,
       });
-      completionFlags.push(usPts !== null && oppPts !== null);
+      completionFlags.push(ctx.isFinal && usPts !== null && oppPts !== null);
     }
 
     rows.sort((a, b) => a.cfbWeek - b.cfbWeek || a.cfbDate.localeCompare(b.cfbDate));
 
-    const shouldCache = contexts.every((ctx, index) => !ctx.shouldFetch || completionFlags[index]);
+    const shouldCache = contexts.every((ctx, index) => {
+      if (!ctx.shouldFetch) return true;
+      if (!ctx.isFinal) return false;
+      return completionFlags[index];
+    });
     if (shouldCache && rows.length) {
       await kvSet(cacheKey, rows, CACHE_TTL_SECONDS);
     }

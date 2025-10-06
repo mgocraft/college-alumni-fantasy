@@ -115,10 +115,17 @@ export function mapCfbWeekToSingleNflWeek(
     return { season: priorSeason, week: 18 };
   }
   const sortedWindows = sortWindows(windows);
+  const normalizeType = (type: string) => type.trim().toUpperCase();
   const isPreseason = (window: NflWeekWindow) =>
-    window.gameTypes.some((type) => type === "PRE" || type === "PRESEASON");
+    window.gameTypes.some((type) => {
+      const normalized = normalizeType(type);
+      return normalized === "PRE" || normalized === "PRESEASON" || normalized.startsWith("PRE");
+    });
   const isRegular = (window: NflWeekWindow) =>
-    window.gameTypes.some((type) => type === "REG" || type === "REGULAR");
+    window.gameTypes.some((type) => {
+      const normalized = normalizeType(type);
+      return normalized === "REG" || normalized === "REGULAR" || normalized.startsWith("REG");
+    });
 
   const preseasonWindows = sortedWindows.filter(isPreseason);
   const regularSeasonWindows = sortedWindows.filter(isRegular);
