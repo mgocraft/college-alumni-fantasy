@@ -1,3 +1,5 @@
+import { getCfbSeasonSlate } from "@/utils/cfbd";
+import { normalizeSchool } from "@/utils/schoolNames";
 import { aggregateByCollegeMode } from "./scoring";
 import { computeHistoricalAverages, loadWeek, NflverseAssetMissingError } from "./nflverse";
 import { computeStandings, loadRecords } from "./league";
@@ -55,6 +57,36 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
   const schools = new Map<string, MutableSchoolRow>();
   let lastCompletedWeek = 0;
   let lastWeekTotals = new Map<string, number>();
+  const recordCounters = new Map<string, { wins: number; losses: number; ties: number }>();
+
+  const ensureRecordCounter = (key: string) => {
+    const existing = recordCounters.get(key);
+    if (existing) return existing;
+    const created = { wins: 0, losses: 0, ties: 0 };
+    recordCounters.set(key, created);
+    return created;
+  };
+
+  const scheduleByWeek = new Map<number, Array<{ home: string; away: string }>>();
+  try {
+    const [regularSlate, postseasonSlate] = await Promise.all([
+      getCfbSeasonSlate(season),
+      getCfbSeasonSlate(season, "postseason"),
+    ]);
+    const combined = [...regularSlate.slate, ...postseasonSlate.slate];
+    for (const game of combined) {
+      const week = Number(game.week);
+      if (!Number.isFinite(week) || week <= 0) continue;
+      const home = normalizeSchool(game.home);
+      const away = normalizeSchool(game.away);
+      if (!home || !away) continue;
+      const entry = scheduleByWeek.get(week) ?? [];
+      entry.push({ home, away });
+      scheduleByWeek.set(week, entry);
+    }
+  } catch (error) {
+    console.warn("[seasonSummary] Unable to load CFB schedule for records", error);
+  }
 
   const ensureRow = (schoolName: string): MutableSchoolRow => {
     const key = schoolName.toLowerCase();
@@ -154,6 +186,29 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
       }
     }
 
+    const scheduledGames = scheduleByWeek.get(week) ?? [];
+    for (const matchup of scheduledGames) {
+      const homeKey = matchup.home.toLowerCase();
+      const awayKey = matchup.away.toLowerCase();
+      const homePoints = weekTotals.get(homeKey);
+      const awayPoints = weekTotals.get(awayKey);
+      if (homePoints === undefined || awayPoints === undefined) {
+        continue;
+      }
+      const homeRecord = ensureRecordCounter(homeKey);
+      const awayRecord = ensureRecordCounter(awayKey);
+      if (homePoints > awayPoints) {
+        homeRecord.wins += 1;
+        awayRecord.losses += 1;
+      } else if (awayPoints > homePoints) {
+        awayRecord.wins += 1;
+        homeRecord.losses += 1;
+      } else {
+        homeRecord.ties += 1;
+        awayRecord.ties += 1;
+      }
+    }
+
     lastCompletedWeek = week;
     lastWeekTotals = weekTotals;
   }
@@ -185,6 +240,15 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
     console.warn("[seasonSummary] Unable to load simulated records", error);
   }
 
+  const computedRecordStrings = new Map<string, string>();
+  for (const [key, record] of recordCounters.entries()) {
+    const games = record.wins + record.losses + record.ties;
+    if (games === 0) continue;
+    const base = `${record.wins}-${record.losses}`;
+    const value = record.ties > 0 ? `${base}-${record.ties}` : base;
+    computedRecordStrings.set(key, value);
+  }
+
   for (const [key, entry] of schools.entries()) {
     const lastWeekPoints = lastWeekTotals.get(key) ?? 0;
     let topPlayer: PlayerContribution | undefined;
@@ -199,7 +263,7 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
       weeklyTotal: Number(entry.weeklyTotal.toFixed(2)),
       managerTotal: Number(entry.managerTotal.toFixed(2)),
       lastWeekPoints: Number(lastWeekPoints.toFixed(2)),
-      record: recordBySchool?.get(key),
+      record: recordBySchool?.get(key) ?? computedRecordStrings.get(key),
       topPlayer: topPlayer
         ? {
             name: topPlayer.name,

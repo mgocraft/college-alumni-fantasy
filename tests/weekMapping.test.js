@@ -15,8 +15,8 @@ test('mapCfbWeekToSingleNflWeek aligns early CFB weeks to preseason and regular 
   const nflSchedule = [
     { season: 2024, week: 1, gameType: 'PRE', kickoffISO: '2024-08-11T00:00:00Z' },
     { season: 2024, week: 2, gameType: 'PRE', kickoffISO: '2024-08-18T00:00:00Z' },
-    { season: 2024, week: 3, gameType: 'PRE', kickoffISO: '2024-08-25T00:00:00Z' },
-    { season: 2024, week: 4, gameType: 'REG', kickoffISO: '2024-09-10T01:15:00Z' },
+    { season: 2024, week: 3, gameType: 'PRE3', kickoffISO: '2024-08-25T00:00:00Z' },
+    { season: 2024, week: 4, gameType: 'REGULAR_SEASON', kickoffISO: '2024-09-10T01:15:00Z' },
     { season: 2024, week: 5, gameType: 'REG', kickoffISO: '2024-09-17T01:15:00Z' },
   ];
   const windows = buildNflWeekWindows(nflSchedule);

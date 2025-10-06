@@ -42,6 +42,7 @@ type GameResultRow = {
   usPts: number | null;
   oppPts: number | null;
   result: "W" | "L" | "T" | null;
+  status: "final" | "pending" | "scheduled";
   nflSeason: number;
   nflWeek: number;
   nflWindowStart: string;
@@ -196,9 +197,17 @@ export default function SchoolDetail({ params }: { params: { school: string } })
     return `${format(start)} → ${format(end)}`;
   };
   const formatGamePoints = (row: GameResultRow) => {
-    if (typeof row.usPts === 'number' && typeof row.oppPts === 'number' && row.result) {
-      return `${row.usPts.toFixed(1)}–${row.oppPts.toFixed(1)} (${row.result})`;
+    const status = row.status ?? (row.result ? 'final' : 'scheduled');
+    const haveNumbers = typeof row.usPts === 'number' && typeof row.oppPts === 'number';
+    const base = haveNumbers ? `${row.usPts!.toFixed(1)}–${row.oppPts!.toFixed(1)}` : null;
+    if (base) {
+      if (row.result) return `${base} (${row.result})`;
+      if (status === 'pending') return `${base} (pending)`;
+      if (status === 'scheduled') return `${base} (scheduled)`;
+      return base;
     }
+    if (status === 'pending') return 'Pending';
+    if (status === 'scheduled') return 'Scheduled';
     return '—';
   };
   const gameResultsSeasonLabel = gameResults?.season ?? (Number.isFinite(parsedSeason) ? parsedSeason : new Date().getFullYear());
