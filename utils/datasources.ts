@@ -599,6 +599,19 @@ const GAME_TYPE_WHITELIST = new Set([
   "preseason",
 ]);
 
+const isAllowedGameType = (value: string): boolean => {
+  if (!value) return false;
+  if (GAME_TYPE_WHITELIST.has(value)) return true;
+  const normalized = value.trim().toUpperCase();
+  if (!normalized) return false;
+  if (GAME_TYPE_WHITELIST.has(normalized)) return true;
+  if (normalized.startsWith("PRE")) return true;
+  if (normalized.startsWith("REG")) return true;
+  if (normalized.startsWith("POST")) return true;
+  if (["WC", "DIV", "CONF", "CON", "SB"].includes(normalized)) return true;
+  return false;
+};
+
 export async function getNflSchedule(season: number): Promise<NflScheduleGame[]> {
   if (nflScheduleCache.has(season)) {
     return nflScheduleCache.get(season)!.map((game) => ({ ...game }));
@@ -612,8 +625,10 @@ export async function getNflSchedule(season: number): Promise<NflScheduleGame[]>
   const rows = parseCsv(text);
   const games: NflScheduleGame[] = [];
   for (const row of rows) {
-    const gameType = row.game_type || row.gameType || row.game_type2 || row.season_type || "";
-    if (gameType && !GAME_TYPE_WHITELIST.has(gameType)) continue;
+    const rawType = row.game_type || row.gameType || row.game_type2 || row.season_type || "";
+    const trimmedType = typeof rawType === "string" ? rawType.trim() : "";
+    if (trimmedType && !isAllowedGameType(trimmedType)) continue;
+    const gameType = trimmedType ? trimmedType.toUpperCase() : "REG";
     const weekValue = Number(row.week || row.game_week || row.week_number || row.weeknum);
     if (!Number.isFinite(weekValue)) continue;
     const kickoffISO = parseNflKickoff(row, season);
