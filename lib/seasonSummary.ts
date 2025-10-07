@@ -190,6 +190,14 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
     for (const matchup of scheduledGames) {
       const homeKey = matchup.home.toLowerCase();
       const awayKey = matchup.away.toLowerCase();
+      if (!weekTotals.has(homeKey)) {
+        ensureRow(matchup.home);
+        weekTotals.set(homeKey, 0);
+      }
+      if (!weekTotals.has(awayKey)) {
+        ensureRow(matchup.away);
+        weekTotals.set(awayKey, 0);
+      }
       const homePoints = weekTotals.get(homeKey);
       const awayPoints = weekTotals.get(awayKey);
       if (homePoints === undefined || awayPoints === undefined) {
