@@ -103,17 +103,6 @@ export function mapCfbWeekToSingleNflWeek(
   cfbWeek: number,
   priorSeason: number,
 ): NflWeekReference {
-  if (!games.length) {
-    return { season: priorSeason, week: 18 };
-  }
-  const latest = games.reduce<Date | null>((acc, game) => {
-    const kickoff = new Date(game.kickoffISO);
-    if (!acc || kickoff.getTime() > acc.getTime()) return kickoff;
-    return acc;
-  }, null);
-  if (!latest) {
-    return { season: priorSeason, week: 18 };
-  }
   const sortedWindows = sortWindows(windows);
   const normalizeType = (type: string) => type.trim().toUpperCase();
   const isPreseason = (window: NflWeekWindow) =>
@@ -135,12 +124,30 @@ export function mapCfbWeekToSingleNflWeek(
     if (target) {
       return { season: target.season, week: target.week };
     }
-  } else {
-    const regularIndex = Math.max(0, cfbWeek - 2);
+  } else if (regularSeasonWindows.length) {
+    const regularIndex = Math.max(0, Math.min(cfbWeek - 2, regularSeasonWindows.length - 1));
     const target = regularSeasonWindows[regularIndex];
     if (target) {
       return { season: target.season, week: target.week };
     }
+  }
+
+  if (!games.length) {
+    const fallbackTarget =
+      regularSeasonWindows[regularSeasonWindows.length - 1] ?? sortedWindows[sortedWindows.length - 1];
+    if (fallbackTarget) {
+      return { season: fallbackTarget.season, week: fallbackTarget.week };
+    }
+    return { season: priorSeason, week: 18 };
+  }
+
+  const latest = games.reduce<Date | null>((acc, game) => {
+    const kickoff = new Date(game.kickoffISO);
+    if (!acc || kickoff.getTime() > acc.getTime()) return kickoff;
+    return acc;
+  }, null);
+  if (!latest) {
+    return { season: priorSeason, week: 18 };
   }
 
   return mapKickoffToNflWeek(latest.toISOString(), sortedWindows, priorSeason);
