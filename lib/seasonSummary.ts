@@ -57,14 +57,33 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
   const schools = new Map<string, MutableSchoolRow>();
   let lastCompletedWeek = 0;
   let lastWeekTotals = new Map<string, number>();
-  const recordCounters = new Map<string, { wins: number; losses: number; ties: number }>();
+  type RecordCounter = { wins: number; losses: number; ties: number };
+  const recordCounters = new Map<string, RecordCounter>();
+  const actualRecordCounters = new Map<string, RecordCounter>();
 
-  const ensureRecordCounter = (key: string) => {
-    const existing = recordCounters.get(key);
-    if (existing) return existing;
-    const created = { wins: 0, losses: 0, ties: 0 };
-    recordCounters.set(key, created);
+  const ensureRecordCounter = (key: string, map: Map<string, RecordCounter>) => {
+    if (map.has(key)) return map.get(key)!;
+    const created: RecordCounter = { wins: 0, losses: 0, ties: 0 };
+    map.set(key, created);
     return created;
+  };
+
+  const gamesPlayed = (record: RecordCounter) => record.wins + record.losses + record.ties;
+  const formatRecord = (record: RecordCounter) => {
+    const base = `${record.wins}-${record.losses}`;
+    return record.ties > 0 ? `${base}-${record.ties}` : base;
+  };
+  const parseRecordString = (value: string | null | undefined): { games: number } | null => {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const match = trimmed.match(/^(\d+)-(\d+)(?:-(\d+))?$/);
+    if (!match) return null;
+    const wins = Number.parseInt(match[1], 10);
+    const losses = Number.parseInt(match[2], 10);
+    const ties = match[3] ? Number.parseInt(match[3], 10) : 0;
+    if (!Number.isFinite(wins) || !Number.isFinite(losses) || !Number.isFinite(ties)) return null;
+    return { games: wins + losses + ties };
   };
 
   const scheduleByWeek = new Map<number, Array<{ home: string; away: string }>>();
@@ -83,6 +102,24 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
       const entry = scheduleByWeek.get(week) ?? [];
       entry.push({ home, away });
       scheduleByWeek.set(week, entry);
+
+      const homePoints = typeof game.homePoints === "number" ? game.homePoints : null;
+      const awayPoints = typeof game.awayPoints === "number" ? game.awayPoints : null;
+      if (homePoints === null || awayPoints === null) continue;
+      const homeKey = home.toLowerCase();
+      const awayKey = away.toLowerCase();
+      const homeRecord = ensureRecordCounter(homeKey, actualRecordCounters);
+      const awayRecord = ensureRecordCounter(awayKey, actualRecordCounters);
+      if (homePoints > awayPoints) {
+        homeRecord.wins += 1;
+        awayRecord.losses += 1;
+      } else if (awayPoints > homePoints) {
+        awayRecord.wins += 1;
+        homeRecord.losses += 1;
+      } else {
+        homeRecord.ties += 1;
+        awayRecord.ties += 1;
+      }
     }
   } catch (error) {
     console.warn("[seasonSummary] Unable to load CFB schedule for records", error);
@@ -203,8 +240,8 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
       if (homePoints === undefined || awayPoints === undefined) {
         continue;
       }
-      const homeRecord = ensureRecordCounter(homeKey);
-      const awayRecord = ensureRecordCounter(awayKey);
+      const homeRecord = ensureRecordCounter(homeKey, recordCounters);
+      const awayRecord = ensureRecordCounter(awayKey, recordCounters);
       if (homePoints > awayPoints) {
         homeRecord.wins += 1;
         awayRecord.losses += 1;
@@ -248,13 +285,18 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
     console.warn("[seasonSummary] Unable to load simulated records", error);
   }
 
-  const computedRecordStrings = new Map<string, string>();
+  const fantasyRecordStrings = new Map<string, { value: string; games: number }>();
   for (const [key, record] of recordCounters.entries()) {
-    const games = record.wins + record.losses + record.ties;
+    const games = gamesPlayed(record);
     if (games === 0) continue;
-    const base = `${record.wins}-${record.losses}`;
-    const value = record.ties > 0 ? `${base}-${record.ties}` : base;
-    computedRecordStrings.set(key, value);
+    fantasyRecordStrings.set(key, { value: formatRecord(record), games });
+  }
+
+  const actualRecordStrings = new Map<string, { value: string; games: number }>();
+  for (const [key, record] of actualRecordCounters.entries()) {
+    const games = gamesPlayed(record);
+    if (games === 0) continue;
+    actualRecordStrings.set(key, { value: formatRecord(record), games });
   }
 
   for (const [key, entry] of schools.entries()) {
@@ -266,12 +308,34 @@ export async function loadSeasonSummary(options: SeasonSummaryOptions): Promise<
       }
     }
 
+    const candidates: Array<{ value: string; games: number; priority: number }> = [];
+    const savedRecordRaw = recordBySchool?.get(key);
+    if (savedRecordRaw) {
+      const trimmed = savedRecordRaw.trim();
+      const parsed = parseRecordString(trimmed);
+      if (parsed) {
+        candidates.push({ value: trimmed, games: parsed.games, priority: 3 });
+      }
+    }
+    const actualRecord = actualRecordStrings.get(key);
+    if (actualRecord) {
+      candidates.push({ value: actualRecord.value, games: actualRecord.games, priority: 2 });
+    }
+    const fantasyRecord = fantasyRecordStrings.get(key);
+    if (fantasyRecord) {
+      candidates.push({ value: fantasyRecord.value, games: fantasyRecord.games, priority: 1 });
+    }
+    candidates.sort((a, b) => {
+      if (b.games !== a.games) return b.games - a.games;
+      return b.priority - a.priority;
+    });
+
     rows.push({
       school: entry.school,
       weeklyTotal: Number(entry.weeklyTotal.toFixed(2)),
       managerTotal: Number(entry.managerTotal.toFixed(2)),
       lastWeekPoints: Number(lastWeekPoints.toFixed(2)),
-      record: recordBySchool?.get(key) ?? computedRecordStrings.get(key),
+      record: candidates[0]?.value,
       topPlayer: topPlayer
         ? {
             name: topPlayer.name,
