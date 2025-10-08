@@ -10,7 +10,12 @@ import {
   StatsNotAvailableError,
   getNflSchedule,
 } from "@/utils/datasources";
-import { estimateNflWeekForDate, lastCompletedNflWeek, REGULAR_SEASON_WEEKS } from "@/utils/nflWeek";
+import {
+  estimateNflWeekForDate,
+  lastCompletedNflWeek,
+  preseasonWeekCapForSeason,
+  REGULAR_SEASON_WEEKS,
+} from "@/utils/nflWeek";
 import type { PlayerWeekly } from "@/utils/compute";
 import type { SlateDiagnostics, SlateMatchSample } from "@/types/alumniTeam";
 import { buildNflWeekWindows, mapCfbWeekToSingleNflWeek } from "@/utils/weekMapping";
@@ -275,8 +280,10 @@ export async function GET(
       }
 
       if (!shouldFetch) {
-        const withinRegularSeason = Number.isFinite(rawWeek)
-          ? rawWeek >= 1 && rawWeek <= REGULAR_SEASON_WEEKS
+        const maxPreseasonWeek = preseasonWeekCapForSeason(game.season);
+        const minSupportedRawWeek = -maxPreseasonWeek;
+        const supportedByEstimate = Number.isFinite(rawWeek)
+          ? rawWeek >= minSupportedRawWeek && rawWeek <= REGULAR_SEASON_WEEKS
           : false;
         const startMs = new Date(nflWindowStart).getTime();
         const endMs = new Date(nflWindowEnd).getTime();
@@ -284,7 +291,7 @@ export async function GET(
           game.season < latestCompleted.season ||
           (game.season === latestCompleted.season && estimate.week <= latestCompleted.week) ||
           (Number.isFinite(endMs) && nowMs >= endMs);
-        if (withinRegularSeason && completedByEstimate) {
+        if (supportedByEstimate && completedByEstimate) {
           shouldFetch = true;
           if (Number.isFinite(endMs) && nowMs >= endMs) {
             isFinal = true;
@@ -296,7 +303,7 @@ export async function GET(
           nflWeek = estimate.week;
           nflWindowStart = estimate.startISO;
           nflWindowEnd = estimate.endISO;
-        } else if (withinRegularSeason && Number.isFinite(startMs) && nowMs >= startMs) {
+        } else if (supportedByEstimate && Number.isFinite(startMs) && nowMs >= startMs) {
           shouldFetch = true;
           status = Number.isFinite(endMs) && nowMs >= endMs ? "final" : "pending";
           if (status === "final") {
