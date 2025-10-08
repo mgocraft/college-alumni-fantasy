@@ -1,13 +1,12 @@
 
 'use client';
 
-import { useEffect, useState, type ReactNode } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { fetchJson, friendlyErrorMessage } from "@/lib/clientFetch";
 import type { SlateDiagnostics } from "@/types/alumniTeam";
-import { useDefenseStatus } from "@/utils/useDefenseStatus";
 
 type Performer = {
   name: string;
@@ -89,34 +88,50 @@ const unslugSchoolParam = (value: string): string => {
 export default function SchoolDetail({ params }: { params: { school: string } }) {
   const { school } = params;
   const sp = useSearchParams();
-  const router = useRouter();
-  const debugRequested = sp.get("debug") === "1";
+  const searchString = sp.toString();
+  const debugRequested = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return params.get("debug") === "1";
+  }, [searchString]);
   const normalizedSchool = unslugSchoolParam(school);
   const schoolSlug = encodeURIComponent(normalizedSchool);
-  const initialDefenseParam = sp.get("defense") as "none" | "approx" | null;
-  const [format, setFormat] = useState(sp.get("format") ?? "ppr");
-  const [season, setSeason] = useState(sp.get("season") ?? "2025");
-  const [mode, setMode] = useState<"weekly" | "avg">((sp.get("mode") as any) ?? "weekly");
-  const [includeK, setIncludeK] = useState(true);
-  const [defense, setDefense] = useState<"none" | "approx">(
-    initialDefenseParam === "none" ? "none" : "approx",
+  const config = useMemo(
+    () => {
+      const params = new URLSearchParams(searchString);
+      const season = params.get("season") ?? "2025";
+      const format = params.get("format") ?? "ppr";
+      const includeKParam = params.get("includeK");
+      const includeK = includeKParam === "false" ? false : true;
+      const defenseParam = params.get("defense");
+      const defense: "none" | "approx" = defenseParam === "none" ? "none" : "approx";
+      const startWeek = params.get("startWeek") ?? "1";
+      const endWeek = params.get("endWeek") ?? "18";
+      return { season, format, includeK, defense, startWeek, endWeek };
+    },
+    [searchString],
   );
-  const [startWeek, setStartWeek] = useState(sp.get("startWeek") ?? "1");
-  const [endWeek, setEndWeek] = useState(sp.get("endWeek") ?? "18");
-  const [data, setData] = useState<Api | null>(null);
+  const configKey = useMemo(() => JSON.stringify(config), [config]);
+  const seriesQuery = useMemo(() => {
+    const params = new URLSearchParams({
+      season: config.season,
+      startWeek: config.startWeek,
+      endWeek: config.endWeek,
+      format: config.format,
+      includeK: String(config.includeK),
+      defense: config.defense,
+    });
+    if (debugRequested) params.set("debug", "1");
+    return params.toString();
+  }, [configKey, debugRequested]);
+  const [weeklyData, setWeeklyData] = useState<Api | null>(null);
+  const [managerData, setManagerData] = useState<Api | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [gameResults, setGameResults] = useState<GameResultsResponse | null>(null);
   const [gameResultsLoading, setGameResultsLoading] = useState(true);
   const [gameResultsError, setGameResultsError] = useState<string | null>(null);
   const [gameResultsPending, setGameResultsPending] = useState<PendingGameResults | null>(null);
-  const parsedSeason = Number.parseInt(season, 10);
-  const parsedEndWeek = Number.parseInt(endWeek, 10);
-  const defenseStatus = useDefenseStatus({
-    season: Number.isFinite(parsedSeason) && parsedSeason > 0 ? parsedSeason : 2025,
-    week: Number.isFinite(parsedEndWeek) && parsedEndWeek > 0 ? parsedEndWeek : undefined,
-    enabled: defense === 'approx',
-  });
+  const parsedSeason = Number.parseInt(config.season, 10);
   const loadGameResults = async (seasonValue: string) => {
     setGameResultsLoading(true);
     setGameResultsError(null);
@@ -152,46 +167,82 @@ export default function SchoolDetail({ params }: { params: { school: string } })
       setGameResultsLoading(false);
     }
   };
-  const refresh = async () => {
-    const params = new URLSearchParams({
-      season,
-      startWeek,
-      endWeek,
-      format,
-      mode,
-      includeK: String(includeK),
-      defense,
-    });
-    if (debugRequested) params.set("debug", "1");
-    const q = params.toString();
-    router.replace(`/schools/${schoolSlug}?${q}`);
+  const loadSeries = async () => {
     setLoading(true);
     setError(null);
-    void loadGameResults(season);
     try {
-      const response = await fetchJson<Api>(`/api/school/${schoolSlug}?${q}`);
-      if (response && typeof response === "object" && "error" in response) {
-        const message = typeof (response as { error?: unknown }).error === "string"
-          ? String((response as { error?: unknown }).error)
-          : `Unable to load data for ${normalizedSchool}`;
-        throw new Error(message);
+      const [weeklyResponse, managerResponse] = await Promise.all([
+        fetchJson<Api>(`/api/school/${schoolSlug}?${seriesQuery}&mode=weekly`),
+        fetchJson<Api>(`/api/school/${schoolSlug}?${seriesQuery}&mode=avg`),
+      ]);
+      const weeklyError = (weeklyResponse as { error?: unknown }).error;
+      if (typeof weeklyError === "string" && weeklyError.trim()) {
+        throw new Error(weeklyError);
       }
-      setData(response);
+      const managerError = (managerResponse as { error?: unknown }).error;
+      if (typeof managerError === "string" && managerError.trim()) {
+        throw new Error(managerError);
+      }
+      setWeeklyData(weeklyResponse);
+      setManagerData(managerResponse);
     } catch (e) {
       console.error(`Failed to load school detail for ${normalizedSchool}`, e);
-      setData(null);
+      setWeeklyData(null);
+      setManagerData(null);
       setError(friendlyErrorMessage(e, `Unable to load data for ${normalizedSchool}`));
     } finally {
       setLoading(false);
     }
   };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(()=>{ void refresh(); }, [schoolSlug]);
-  const chartData = (data?.series??[]).map(p=>({ week: p.week, points: p.totalPoints }));
+
+  useEffect(() => {
+    void loadGameResults(config.season);
+    void loadSeries();
+  }, [config.season, schoolSlug, seriesQuery, debugRequested]);
+  const weeklySeries = weeklyData?.series ?? [];
+  const managerSeries = managerData?.series ?? [];
+  const weeklyMap = new Map(weeklySeries.map((row) => [row.week, row]));
+  const managerMap = new Map(managerSeries.map((row) => [row.week, row]));
+  const allWeeks = Array.from(new Set<number>([
+    ...weeklyMap.keys(),
+    ...managerMap.keys(),
+  ])).sort((a, b) => a - b);
+  const combinedWeekRows = allWeeks.map((week) => ({
+    week,
+    weekly: weeklyMap.get(week) ?? { week, totalPoints: 0, performers: [] as Performer[] },
+    manager: managerMap.get(week) ?? { week, totalPoints: 0, performers: [] as Performer[] },
+  }));
+  const meta = weeklyData ?? managerData;
+  const formatLabel = (meta?.format ?? config.format ?? "ppr").toUpperCase();
+  const defenseLabel = config.defense === "approx" ? " + DEF" : "";
   const sortedGameResults = (gameResults?.rows ?? []).slice().sort((a,b)=>{
     if (a.cfbWeek !== b.cfbWeek) return a.cfbWeek - b.cfbWeek;
     return a.cfbDate.localeCompare(b.cfbDate);
   });
+  const maxRelevantWeek = (() => {
+    let max = 0;
+    for (const row of sortedGameResults) {
+      if (row.status !== "scheduled" && Number.isFinite(row.nflWeek)) {
+        max = Math.max(max, row.nflWeek);
+      }
+    }
+    if (max === 0) {
+      for (const entry of combinedWeekRows) {
+        if (Number.isFinite(entry.week)) {
+          max = Math.max(max, entry.week);
+        }
+      }
+    }
+    return max;
+  })();
+  const limitedWeekRows = maxRelevantWeek > 0
+    ? combinedWeekRows.filter((entry) => entry.week <= maxRelevantWeek)
+    : combinedWeekRows;
+  const chartData = limitedWeekRows.map((entry) => ({
+    week: entry.week,
+    weeklyPoints: entry.weekly.totalPoints,
+    managerPoints: entry.manager.totalPoints,
+  }));
   const windowLabel = (start: string, end: string) => {
     const format = (value: string) => (value ? value.replace('T', ' ').slice(0, 16) : '—');
     return `${format(start)} → ${format(end)}`;
@@ -407,32 +458,57 @@ export default function SchoolDetail({ params }: { params: { school: string } })
   return (
     <div style={{ display:'grid', gap:16 }}>
       <div className="card">
-        <h2>{data?.school} — Week-by-Week ({data?.format?.toUpperCase()} + DEF)</h2>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:12, margin:'12px 0' }}>
-          <label>Season<input type="number" value={season} onChange={e=>setSeason(e.target.value)} style={{ marginLeft:8, width:100 }}/></label>
-          <label>Format<select value={format} onChange={e=>setFormat(e.target.value)} style={{ marginLeft:8 }}><option value="ppr">PPR</option><option value="half-ppr">Half-PPR</option><option value="standard">Standard</option></select></label>
-          <label>Selection Mode<select value={mode} onChange={e=>setMode(e.target.value as any)} style={{ marginLeft:8 }}><option value="weekly">Weekly best</option><option value="avg">Manager (avg to date)</option></select></label>
-          <label>Include K <input type="checkbox" checked={includeK} onChange={e=>setIncludeK(e.target.checked)} style={{ marginLeft:8 }}/></label>
-          <label>Defense<select value={defense} onChange={e=>setDefense(e.target.value as any)} style={{ marginLeft:8 }}><option value="none">None</option><option value="approx">Approx (snap share)</option></select></label>
-          <label>Start Week<input type="number" min={1} max={18} value={startWeek} onChange={e=>setStartWeek(e.target.value)} style={{ marginLeft:8, width:80 }}/></label>
-          <label>End Week<input type="number" min={1} max={18} value={endWeek} onChange={e=>setEndWeek(e.target.value)} style={{ marginLeft:8, width:80 }}/></label>
-          <button className="btn" onClick={refresh}>Update</button>
-        </div>
-        {defense === 'approx' && defenseStatus.message && (
-          <div className="badge" style={{ marginTop: 8, background: '#f97316', color: '#0b1220' }}>
-            Defense stats not posted yet; check back later.
-          </div>
-        )}
+        <h2>{meta?.school ?? normalizedSchool} — Week-by-Week ({formatLabel}{defenseLabel})</h2>
+        <p style={{ marginTop: 8, color: '#94a3b8', fontSize: '0.9rem' }}>
+          Top Scoring (weekly best) and Manager Mode (rolling lineup) totals are displayed together.
+        </p>
         <div style={{ width:'100%', height:320, background:'#0b1220', borderRadius:12, padding:12 }}>
-          <ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="week"/><YAxis/><Tooltip/><Line type="monotone" dataKey="points" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="week" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="weeklyPoints" name="Top Scoring" stroke="#38bdf8" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="managerPoints" name="Manager Mode" stroke="#f97316" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
         <div style={{ margin:'16px 0' }}>
           <table style={{ width:'100%', borderCollapse:'collapse' }}>
-            <thead><tr><th style={{textAlign:'left'}}>Week</th><th style={{textAlign:'right'}}>Points</th><th style={{textAlign:'left'}}>Starters</th></tr></thead>
-            <tbody>{data?.series?.map(row=>(<tr key={row.week} style={{ borderTop:'1px solid #1e293b' }}>
-              <td>W{row.week}</td><td style={{ textAlign:'right' }}>{row.totalPoints.toFixed(1)}</td>
-              <td><ul>{row.performers.map((p,idx)=>(<li key={idx}>{renderPerformer(p)}</li>))}</ul></td>
-            </tr>))}</tbody>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Week</th>
+                <th style={{ textAlign: 'right' }}>Top Scoring Pts</th>
+                <th style={{ textAlign: 'left' }}>Top Scoring Starters</th>
+                <th style={{ textAlign: 'right' }}>Manager Mode Pts</th>
+                <th style={{ textAlign: 'left' }}>Manager Starters</th>
+              </tr>
+            </thead>
+            <tbody>
+              {limitedWeekRows.map((row) => (
+                <tr key={row.week} style={{ borderTop: '1px solid #1e293b' }}>
+                  <td>W{row.week}</td>
+                  <td style={{ textAlign: 'right' }}>{row.weekly.totalPoints.toFixed(1)}</td>
+                  <td>
+                    <ul>
+                      {row.weekly.performers.map((p, idx) => (
+                        <li key={idx}>{renderPerformer(p)}</li>
+                      ))}
+                    </ul>
+                  </td>
+                  <td style={{ textAlign: 'right' }}>{row.manager.totalPoints.toFixed(1)}</td>
+                  <td>
+                    <ul>
+                      {row.manager.performers.map((p, idx) => (
+                        <li key={idx}>{renderPerformer(p)}</li>
+                      ))}
+                    </ul>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       </div>
