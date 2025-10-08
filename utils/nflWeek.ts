@@ -1,6 +1,12 @@
 export const REGULAR_SEASON_WEEKS = 18;
 const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
+const MODERN_MAX_PRESEASON_WEEK = 3;
+const LEGACY_MAX_PRESEASON_WEEK = 4;
+
+export const preseasonWeekCapForSeason = (season: number): number =>
+  season >= 2021 ? MODERN_MAX_PRESEASON_WEEK : LEGACY_MAX_PRESEASON_WEEK;
+
 const toUtcDate = (year: number, monthIndex: number, day: number, hours = 0): Date => {
   const date = new Date(Date.UTC(year, monthIndex, day, hours, 0, 0, 0));
   return date;
@@ -87,8 +93,17 @@ export function estimateNflWeekForDate(
   const weekOneWindow = nflWeekWindowUtc(season, 1);
   const weekOneStart = new Date(weekOneWindow.startISO);
   const rawWeek = Math.floor((kickoff.getTime() - weekOneStart.getTime()) / MS_PER_WEEK) + 1;
-  const week = clampWeek(rawWeek);
-  const { startISO, endISO } = nflWeekWindowUtc(season, week);
-  return { week, rawWeek, startISO, endISO };
+  if (rawWeek >= 1) {
+    const week = clampWeek(rawWeek);
+    const { startISO, endISO } = nflWeekWindowUtc(season, week);
+    return { week, rawWeek, startISO, endISO };
+  }
+
+  const maxPreseasonWeek = preseasonWeekCapForSeason(season);
+  const offsetWeeks = Math.max(rawWeek - 1, -(maxPreseasonWeek + 1));
+  const start = new Date(weekOneStart.getTime() + offsetWeeks * MS_PER_WEEK);
+  const end = new Date(start.getTime() + MS_PER_WEEK);
+  const week = Math.max(0, Math.min(maxPreseasonWeek, maxPreseasonWeek + rawWeek));
+  return { week, rawWeek, startISO: start.toISOString(), endISO: end.toISOString() };
 }
 
