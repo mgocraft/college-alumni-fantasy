@@ -61,45 +61,66 @@ export default async function HomePage() {
     ? `Week ${summary.lastCompletedWeek} Points`
     : "Last Week Points";
 
+  const seasonTitle = summary
+    ? `Season Leaders — ${summary.season} (${summary.format.toUpperCase()} + DEF)`
+    : `Season Leaders — ${DEFAULT_SEASON} (${DEFAULT_FORMAT.toUpperCase()} + DEF)`;
+
+  const weekDescription = summary?.lastCompletedWeek
+    ? `Totals reflect weekly best lineups through Week ${summary.lastCompletedWeek}.`
+    : "Totals update as soon as weekly stat releases drop.";
+
   return (
-    <div className="card">
-      <h1>College Alumni Fantasy</h1>
-      <p>Weekly fantasy points by <b>college</b> from pro players.</p>
-      {defenseBanner && (
-        <p className="badge" style={{ marginTop: 8, background: "#f97316", color: "#0b1220" }}>
-          {defenseBanner}
-        </p>
-      )}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16 }}>
-        <Link className="btn" href="/schools">Browse Schools</Link>
-        <Link className="btn" href="/rankings">Rankings</Link>
-        <Link className="btn" href="/matchups">Simulate Matchups</Link>
-        <Link className="btn" href="/standings">Standings</Link>
+    <main className="page">
+      <div className="toolbar">
+        <div className="toolbar__inner">
+          <h1 className="toolbar__title">College Alumni Fantasy Football</h1>
+          <div className="toolbar__actions">
+            <Link className="btn" href="/schools">Browse Schools</Link>
+            <Link className="btn" href="/rankings">Rankings</Link>
+            <Link className="btn" href="/matchups">Simulate Matchups</Link>
+            <Link className="btn" href="/standings">Standings</Link>
+          </div>
+        </div>
       </div>
-      {error && <p style={{ color: "salmon", marginTop: 16 }}>{error}</p>}
-      {!error && summary && summary.rows.length === 0 && (
-        <p style={{ marginTop: 16 }}>Season data is not yet available for {summary.season}.</p>
-      )}
-      {!error && summary && summary.rows.length > 0 && (
-        <div style={{ marginTop: 24 }}>
-          <h2 style={{ marginTop: 0 }}>Season Leaders — {summary.season} ({summary.format.toUpperCase()} + DEF)</h2>
-          <p style={{ marginTop: 4 }}>Totals reflect weekly best lineups through Week {summary.lastCompletedWeek}.</p>
-          <div style={{ overflowX: "auto", marginTop: 12 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+
+      <section className="card hero">
+        <p className="hero__subtitle">
+          Imagine every college program suiting up a fantasy roster built entirely from its alumni. We collect the
+          weekly scoring, simulate each school&apos;s schedule with those totals, and track the aggregate results so you
+          can return every week to see how your favorite program is stacking up.
+        </p>
+        {defenseBanner && (
+          <p className="alert alert--warning">
+            {defenseBanner}
+          </p>
+        )}
+      </section>
+
+      <section className="card">
+        <h2 className="section-title">{seasonTitle}</h2>
+        <p className="section-subtitle">{weekDescription}</p>
+        {error && (
+          <p className="alert alert--error">{error}</p>
+        )}
+        {!error && summary && summary.rows.length === 0 && (
+          <p className="alert alert--warning">Season data is not yet available for {summary.season}.</p>
+        )}
+        {!error && summary && summary.rows.length > 0 && (
+          <div className="table-wrapper">
+            <table className="table">
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left" }}>Rank</th>
-                  <th style={{ textAlign: "left" }}>School</th>
+                  <th>Rank</th>
+                  <th>School</th>
                   <th style={{ textAlign: "right" }}>Season Points</th>
                   <th style={{ textAlign: "right" }}>{lastWeekLabel}</th>
-                  <th style={{ textAlign: "right" }}>Manager Mode Points</th>
                   <th style={{ textAlign: "right" }}>Record</th>
-                  <th style={{ textAlign: "left" }}>Top Scoring Player</th>
+                  <th>Top Scoring Player</th>
                 </tr>
               </thead>
               <tbody>
                 {summary.rows.map((row, index) => (
-                  <tr key={row.school} style={{ borderTop: "1px solid #1e293b" }}>
+                  <tr key={row.school}>
                     <td>#{index + 1}</td>
                     <td>
                       <Link href={`/schools/${encodeURIComponent(row.school)}`}>
@@ -108,7 +129,6 @@ export default async function HomePage() {
                     </td>
                     <td style={{ textAlign: "right" }}>{formatPoints(row.weeklyTotal)}</td>
                     <td style={{ textAlign: "right" }}>{formatPoints(row.lastWeekPoints)}</td>
-                    <td style={{ textAlign: "right" }}>{formatPoints(row.managerTotal)}</td>
                     <td style={{ textAlign: "right" }}>{row.record ?? "—"}</td>
                     <td>{formatTopPlayer(row.topPlayer)}</td>
                   </tr>
@@ -116,9 +136,18 @@ export default async function HomePage() {
               </tbody>
             </table>
           </div>
+        )}
+      </section>
+
+      <section className="ad-shelf">
+        <div className="ad-slot-grid">
+          <div className="ad-slot">Reserved banner — 728 × 90</div>
+          <div className="ad-slot">Reserved feature — 300 × 250</div>
+          <div className="ad-slot">Reserved tower — 160 × 600</div>
         </div>
-      )}
+      </section>
+
       <div className="footer">Powered by nflverse public releases — no API keys needed.</div>
-    </div>
+    </main>
   );
 }
