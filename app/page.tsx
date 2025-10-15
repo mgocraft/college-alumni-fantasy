@@ -79,6 +79,7 @@ export default async function HomePage() {
             <Link className="btn" href="/rankings">Rankings</Link>
             <Link className="btn" href="/matchups">Simulate Matchups</Link>
             <Link className="btn" href="/standings">Standings</Link>
+            <Link className="btn" href="/about">About</Link>
           </div>
         </div>
       </div>
@@ -146,8 +147,6 @@ export default async function HomePage() {
           <div className="ad-slot">Reserved tower — 160 × 600</div>
         </div>
       </section>
-
-      <div className="footer">Powered by nflverse public releases — no API keys needed.</div>
     </main>
   );
 }
