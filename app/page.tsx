@@ -72,7 +72,7 @@ export default async function HomePage() {
     : "Totals update as soon as weekly stat releases drop.";
 
   return (
-    <main className="page">
+    <main className="page page--flush">
       <div className="toolbar">
         <div className="toolbar__inner">
           <h1 className="toolbar__title">College Alumni Fantasy Football</h1>
@@ -97,6 +97,38 @@ export default async function HomePage() {
             {defenseBanner}
           </p>
         )}
+      </section>
+
+      <section className="card ad-shelf">
+        <div className="ad-slot-grid">
+          {affiliateAds.map((ad) => (
+            <a
+              key={ad.id}
+              className="ad-slot"
+              href={ad.href}
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+            >
+              <div className="ad-slot__media">
+                <Image
+                  alt={ad.image.alt}
+                  className="ad-slot__image"
+                  fill
+                  loading="lazy"
+                  sizes="(min-width: 1024px) 360px, (min-width: 640px) 60vw, 90vw"
+                  src={ad.image.src}
+                />
+              </div>
+              <div className="ad-slot__body">
+                <div className="ad-slot__label">{ad.label}</div>
+                <div className="ad-slot__cta">{ad.cta}</div>
+                {ad.disclaimer && (
+                  <div className="ad-slot__disclaimer">{ad.disclaimer}</div>
+                )}
+              </div>
+            </a>
+          ))}
+        </div>
       </section>
 
       <section className="card">
@@ -142,53 +174,6 @@ export default async function HomePage() {
         )}
       </section>
 
-      <section className="ad-shelf">
-        <div className="ad-slot-grid">
-          {affiliateAds.map((ad) => {
-            if (ad.variant === "prime") {
-              return (
-                <a
-                  key={ad.id}
-                  className="ad-slot ad-slot--prime"
-                  href={ad.href}
-                  target="_blank"
-                  rel="noopener noreferrer sponsored"
-                >
-                  <div className="ad-slot__label">{ad.label}</div>
-                  <div className="ad-slot__cta">{ad.cta}</div>
-                  <div className="ad-slot__disclaimer">{ad.disclaimer}</div>
-                </a>
-              );
-            }
-
-            return (
-              <a
-                key={ad.id}
-                className="ad-slot ad-slot--banner"
-                href={ad.href}
-                target="_blank"
-                rel="noopener noreferrer sponsored"
-              >
-                <div className="ad-slot__media">
-                  <Image
-                    alt={ad.image.alt}
-                    className="ad-slot__image"
-                    fill
-                    loading="lazy"
-                    sizes="(min-width: 1024px) 360px, (min-width: 640px) 60vw, 90vw"
-                    src={ad.image.src}
-                  />
-                </div>
-                <div className="ad-slot__body">
-                  <div className="ad-slot__label">{ad.label}</div>
-                  <div className="ad-slot__cta">{ad.cta}</div>
-                  <div className="ad-slot__disclaimer">{ad.disclaimer}</div>
-                </div>
-              </a>
-            );
-          })}
-        </div>
-      </section>
     </main>
   );
 }

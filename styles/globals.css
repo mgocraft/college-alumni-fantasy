@@ -35,13 +35,18 @@ a {
 .container {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 32px var(--container-pad-x) 64px;
+  padding: 0 var(--container-pad-x) 64px;
 }
 
 .page {
   display: flex;
   flex-direction: column;
   gap: 32px;
+  padding-top: 32px;
+}
+
+.page--flush {
+  padding-top: 0;
 }
 
 .card {
@@ -205,10 +210,10 @@ h2 {
 }
 
 .ad-shelf {
-  padding: 24px 28px;
-  border-radius: 20px;
-  border: 1px dashed rgba(148, 163, 184, 0.45);
-  background: #f8fafc;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .ad-slot-grid {
@@ -220,55 +225,25 @@ h2 {
 }
 
 .ad-slot {
-  min-height: 120px;
-  border: 2px dashed rgba(148, 163, 184, 0.5);
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  font-weight: 600;
-  background: rgba(226, 232, 240, 0.45);
-}
-
-.ad-slot--prime {
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 20px 24px;
-  gap: 6px;
-  border: none;
-  background: linear-gradient(135deg, #0f172a, #1d4ed8 65%, #3b82f6);
-  color: #f8fafc;
-  text-decoration: none;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.35);
-}
-
-.ad-slot--prime:hover,
-.ad-slot--prime:focus-visible {
-  transform: translateY(-2px);
-  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.45);
-}
-
-.ad-slot--banner {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
   padding: 0;
   border: none;
+  border-radius: 14px;
   overflow: hidden;
   background: radial-gradient(circle at top, rgba(37, 99, 235, 0.35), transparent 70%), #020617;
   color: #f8fafc;
   text-decoration: none;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.25);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.2);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.ad-slot--banner:hover,
-.ad-slot--banner:focus-visible {
+.ad-slot:hover,
+.ad-slot:focus-visible {
   transform: translateY(-2px);
-  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.35);
+  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.28);
 }
 
 .ad-slot__media {
@@ -280,7 +255,7 @@ h2 {
   background: rgba(15, 23, 42, 0.88);
   border-bottom: 1px solid rgba(148, 163, 184, 0.25);
   width: 100%;
-  height: clamp(180px, 34vw, 220px);
+  height: clamp(110px, 26vw, 150px);
 }
 
 .ad-slot__image {
@@ -288,43 +263,30 @@ h2 {
 }
 
 .ad-slot__body {
-  padding: 16px 20px 20px;
+  padding: 12px 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   justify-content: center;
   align-items: flex-start;
 }
 
-.ad-slot--banner .ad-slot__label {
-  opacity: 0.8;
-}
-
-.ad-slot--banner .ad-slot__cta {
-  font-size: 1.05rem;
-  line-height: 1.35;
-}
-
-.ad-slot--banner .ad-slot__disclaimer {
-  opacity: 0.75;
-  font-size: 0.72rem;
-}
-
 .ad-slot__label {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   opacity: 0.85;
 }
 
 .ad-slot__cta {
-  font-size: 1.25rem;
+  font-size: 1.05rem;
   font-weight: 700;
+  line-height: 1.3;
 }
 
 .ad-slot__disclaimer {
-  font-size: 0.75rem;
-  opacity: 0.8;
+  font-size: 0.7rem;
+  opacity: 0.72;
 }
 
 .site-footer {
