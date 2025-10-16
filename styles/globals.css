@@ -216,6 +216,7 @@ h2 {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 16px;
   margin-top: 16px;
+  align-items: stretch;
 }
 
 .ad-slot {
@@ -228,6 +229,102 @@ h2 {
   color: var(--muted);
   font-weight: 600;
   background: rgba(226, 232, 240, 0.45);
+}
+
+.ad-slot--prime {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px 24px;
+  gap: 6px;
+  border: none;
+  background: linear-gradient(135deg, #0f172a, #1d4ed8 65%, #3b82f6);
+  color: #f8fafc;
+  text-decoration: none;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.35);
+}
+
+.ad-slot--prime:hover,
+.ad-slot--prime:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.45);
+}
+
+.ad-slot--banner {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+  border: none;
+  overflow: hidden;
+  background: radial-gradient(circle at top, rgba(37, 99, 235, 0.35), transparent 70%), #020617;
+  color: #f8fafc;
+  text-decoration: none;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.25);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ad-slot--banner:hover,
+.ad-slot--banner:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.35);
+}
+
+.ad-slot__media {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.88);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+  width: 100%;
+  height: clamp(180px, 34vw, 220px);
+}
+
+.ad-slot__image {
+  object-fit: cover;
+}
+
+.ad-slot__body {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.ad-slot--banner .ad-slot__label {
+  opacity: 0.8;
+}
+
+.ad-slot--banner .ad-slot__cta {
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+
+.ad-slot--banner .ad-slot__disclaimer {
+  opacity: 0.75;
+  font-size: 0.72rem;
+}
+
+.ad-slot__label {
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.ad-slot__cta {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.ad-slot__disclaimer {
+  font-size: 0.75rem;
+  opacity: 0.8;
 }
 
 .site-footer {
@@ -305,5 +402,16 @@ small.code {
 
   .table {
     min-width: 520px;
+  }
+}
+
+@media (max-width: 640px) {
+  .ad-slot__media {
+    height: 160px;
+  }
+
+  .ad-slot--banner .ad-slot__body {
+    text-align: center;
+    align-items: center;
   }
 }

@@ -1,6 +1,8 @@
+import Image from "next/image";
 import Link from "next/link";
 import { loadSeasonSummary } from "@/lib/seasonSummary";
 import { DefenseUnavailableError, fetchDefenseApprox } from "@/lib/defense";
+import { affiliateAds } from "@/data/affiliateAds";
 
 const DEFAULT_SEASON = 2025;
 const DEFAULT_FORMAT = "ppr";
@@ -142,9 +144,49 @@ export default async function HomePage() {
 
       <section className="ad-shelf">
         <div className="ad-slot-grid">
-          <div className="ad-slot">Reserved banner — 728 × 90</div>
-          <div className="ad-slot">Reserved feature — 300 × 250</div>
-          <div className="ad-slot">Reserved tower — 160 × 600</div>
+          {affiliateAds.map((ad) => {
+            if (ad.variant === "prime") {
+              return (
+                <a
+                  key={ad.id}
+                  className="ad-slot ad-slot--prime"
+                  href={ad.href}
+                  target="_blank"
+                  rel="noopener noreferrer sponsored"
+                >
+                  <div className="ad-slot__label">{ad.label}</div>
+                  <div className="ad-slot__cta">{ad.cta}</div>
+                  <div className="ad-slot__disclaimer">{ad.disclaimer}</div>
+                </a>
+              );
+            }
+
+            return (
+              <a
+                key={ad.id}
+                className="ad-slot ad-slot--banner"
+                href={ad.href}
+                target="_blank"
+                rel="noopener noreferrer sponsored"
+              >
+                <div className="ad-slot__media">
+                  <Image
+                    alt={ad.image.alt}
+                    className="ad-slot__image"
+                    fill
+                    loading="lazy"
+                    sizes="(min-width: 1024px) 360px, (min-width: 640px) 60vw, 90vw"
+                    src={ad.image.src}
+                  />
+                </div>
+                <div className="ad-slot__body">
+                  <div className="ad-slot__label">{ad.label}</div>
+                  <div className="ad-slot__cta">{ad.cta}</div>
+                  <div className="ad-slot__disclaimer">{ad.disclaimer}</div>
+                </div>
+              </a>
+            );
+          })}
         </div>
       </section>
     </main>
