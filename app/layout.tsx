@@ -15,9 +15,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="container">
           {children}
           <footer className="site-footer">
-            <p className="site-footer__note">
-              Powered by nflverse public releases — no API keys needed.
-            </p>
             <p className="site-footer__links">
               <Link href="/about">About</Link>
               <span aria-hidden="true">•</span>
@@ -30,14 +27,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </p>
             <p className="site-footer__affiliate">
               As an Amazon Associate we earn from qualifying purchases.
-              <a
-                href="https://www.amazon.com/?tag=alumniff-20"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Shop our curated picks
-              </a>
-              .
             </p>
           </footer>
         </div>
