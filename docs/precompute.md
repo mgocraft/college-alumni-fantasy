@@ -9,7 +9,7 @@ This service builds and caches matchup data that maps NFL fantasy production to 
 3. Map the CFB week (or each game) to the latest completed NFL week according to the cutoff rule.
 4. Fetch weekly NFL statlines and join them with roster and master data to resolve colleges.
 5. Aggregate player points by college, compute per-matchup results, and optionally season-to-date summaries.
-6. Persist the payload to Vercel KV, falling back to Vercel Blob when KV is unavailable.
+6. Persist the payload to Upstash Redis (REST), falling back to Vercel Blob when KV is unavailable.
 
 ## Environment variables
 
@@ -21,7 +21,7 @@ Documented in `.env.local.example`:
 | `CFB_SCHEDULE_PROVIDER` | `cfbd` (default) or `espn` |
 | `CFBD_API_KEY` | Required when using the CFBD provider |
 | `APP_TZ` | Human-facing time zone (logs/docs), logic uses UTC |
-| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Optional KV configuration |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Optional Redis configuration (legacy `KV_REST_API_URL`/`KV_REST_API_TOKEN` still supported) |
 | `BLOB_READ_WRITE_TOKEN`, `BLOB_URL` | Optional Blob fallback configuration |
 
 ## Mapping rules
@@ -39,7 +39,7 @@ Games are normalized so school names align with roster/college data (see the syn
 
 ## Storage
 
-Results are written to Vercel KV when available, using the keys:
+Results are written to Upstash Redis when available, using the keys:
 
 * `alumni:v1:<season>:<cfbWeek>:matchups`
 * `alumni:v1:<season>:<cfbWeek>:std`

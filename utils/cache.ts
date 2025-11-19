@@ -50,5 +50,5 @@ export async function persistJson(
   if (blobResult) {
     return { backend: "blob", key: blobResult.pathname, url: blobResult.url, skipped: false };
   }
-  throw new Error("Failed to persist JSON. Configure Vercel KV or Blob credentials.");
+  throw new Error("Failed to persist JSON. Configure Upstash Redis or Blob credentials.");
 }
