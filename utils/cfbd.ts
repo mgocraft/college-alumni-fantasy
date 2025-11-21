@@ -1,7 +1,9 @@
-import { kvGet, kvSet } from "@/lib/kv";
+import { kvConfigured, kvGet, kvSet } from "@/lib/kv";
 import { canonicalTeam, normalizeSchool } from "./schoolNames";
 
 export type SeasonType = "regular" | "postseason";
+
+type CfbSlateResponse = { slate: CfbGame[]; provider: "cfbd"; error?: string; status?: number };
 
 export type CfbGame = {
   id: number | null;
@@ -24,6 +26,11 @@ export type CfbGame = {
 
 const CFBD_API_BASE = "https://api.collegefootballdata.com";
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const IN_MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
+const IN_MEMORY_ERROR_TTL_MS = 60 * 60 * 1000;
+
+const inMemorySlateCache = new Map<string, { expiresAt: number; value: CfbSlateResponse }>();
+const pendingSlateFetches = new Map<string, Promise<CfbSlateResponse>>();
 
 const sortGames = (a: CfbGame, b: CfbGame) => {
   if (a.week !== b.week) return a.week - b.week;
@@ -31,6 +38,44 @@ const sortGames = (a: CfbGame, b: CfbGame) => {
   if (a.kickoffISO) return -1;
   if (b.kickoffISO) return 1;
   return 0;
+};
+
+const cloneResponse = (response: CfbSlateResponse): CfbSlateResponse => ({
+  ...response,
+  slate: [...response.slate],
+});
+
+const getInMemoryCache = (key: string, debug: boolean): CfbSlateResponse | null => {
+  const cached = inMemorySlateCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt < Date.now()) {
+    inMemorySlateCache.delete(key);
+    return null;
+  }
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log("[cfbd] slate summary", {
+      key,
+      slateLength: cached.value.slate.length,
+      status: "in-memory-cache",
+      error: cached.value.error,
+    });
+  }
+  return cloneResponse(cached.value);
+};
+
+const setInMemoryCache = (
+  key: string,
+  value: CfbSlateResponse,
+  ttlMs: number,
+  debug: boolean,
+) => {
+  const expiresAt = Date.now() + Math.max(ttlMs, 1000);
+  inMemorySlateCache.set(key, { expiresAt, value: cloneResponse(value) });
+  if (debug) {
+    // eslint-disable-next-line no-console
+    console.log("[cfbd] slate cached in-memory", { key, ttlMs, expiresAt });
+  }
 };
 
 const toIsoOrNull = (value?: string | null): string | null => {
@@ -150,119 +195,157 @@ export async function getCfbSeasonSlate(
   season: number,
   seasonTypeOrDebug: SeasonType | boolean = "regular",
   maybeDebug = false,
-): Promise<{ slate: CfbGame[]; provider: "cfbd"; error?: string; status?: number }> {
+): Promise<CfbSlateResponse> {
   const seasonType = typeof seasonTypeOrDebug === "boolean" ? "regular" : seasonTypeOrDebug;
   const debug = typeof seasonTypeOrDebug === "boolean" ? seasonTypeOrDebug : maybeDebug;
 
   const cacheKey = buildCacheKey(season, seasonType);
+  const inMemoryCached = getInMemoryCache(cacheKey, debug);
+  if (inMemoryCached) return inMemoryCached;
+
   const cached = await kvGet<CfbGame[]>(cacheKey);
   if (cached?.length) {
     const copy = [...cached];
     copy.sort(sortGames);
+    const response: CfbSlateResponse = { slate: copy, provider: "cfbd" };
+    setInMemoryCache(cacheKey, response, IN_MEMORY_TTL_MS, debug);
     if (debug) {
       // eslint-disable-next-line no-console
       console.log("[cfbd] slate summary", {
         season,
         seasonType,
         slateLength: copy.length,
-        status: "cache",
+        status: "kv-cache",
         error: undefined,
       });
     }
-    return { slate: copy, provider: "cfbd" };
+    return response;
   }
 
-  const apiKey = process.env.CFBD_API_KEY?.trim();
-  if (!apiKey) {
-    const error = "Missing CFBD_API_KEY";
-    if (debug) {
-      // eslint-disable-next-line no-console
-      console.error("CFBD slate fetch skipped", { season, seasonType, error });
+  const pending = pendingSlateFetches.get(cacheKey);
+  if (pending) {
+    return pending.then(cloneResponse);
+  }
+
+  const fetchPromise = (async (): Promise<CfbSlateResponse> => {
+    const apiKey = process.env.CFBD_API_KEY?.trim();
+    if (!apiKey) {
+      const error = "Missing CFBD_API_KEY";
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.error("CFBD slate fetch skipped", { season, seasonType, error });
+      }
+      const response: CfbSlateResponse = { slate: [], provider: "cfbd", error };
+      setInMemoryCache(cacheKey, response, IN_MEMORY_ERROR_TTL_MS, debug);
+      return response;
     }
-    return { slate: [], provider: "cfbd", error };
-  }
 
-  const params = new URLSearchParams({ year: String(season), seasonType });
-  const url = `${CFBD_API_BASE}/games?${params.toString()}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-    cache: "no-store",
-  });
-  const status = res.status;
+    const params = new URLSearchParams({ year: String(season), seasonType });
+    const url = `${CFBD_API_BASE}/games?${params.toString()}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      cache: "no-store",
+    });
+    const status = res.status;
 
-  let sampleBody: unknown = null;
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    sampleBody = text.slice(0, 200);
+    let sampleBody: unknown = null;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      sampleBody = text.slice(0, 200);
+      const response: CfbSlateResponse = {
+        slate: [],
+        provider: "cfbd",
+        error: `CFBD ${status}: ${sampleBody}`,
+        status,
+      };
+      setInMemoryCache(cacheKey, response, IN_MEMORY_ERROR_TTL_MS, debug);
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.error("CFBD slate fetch failed", { season, seasonType, status, sampleBody });
+        // eslint-disable-next-line no-console
+        console.log("[cfbd] slate summary", {
+          season,
+          seasonType,
+          slateLength: 0,
+          status,
+          error: response.error,
+        });
+      }
+      return response;
+    }
+
+    const raw = (await res.json().catch(() => [])) as unknown;
     if (debug) {
+      sampleBody = Array.isArray(raw) ? raw.slice(0, 2) : raw;
       // eslint-disable-next-line no-console
-      console.error("CFBD slate fetch failed", { season, seasonType, status, sampleBody });
+      console.log("CFBD slate fetch", {
+        season,
+        seasonType,
+        status,
+        sample: Array.isArray(sampleBody) ? sampleBody : [sampleBody],
+      });
+    }
+
+    const slate: CfbGame[] = [];
+    if (Array.isArray(raw)) {
+      for (const game of raw) {
+        const mapped = mapGame(season, seasonType, game as Record<string, unknown>, debug);
+        if (!mapped) continue;
+        const mappedHomeCanonical = canonicalTeam(mapped.home);
+        const mappedAwayCanonical = canonicalTeam(mapped.away);
+        if (!mappedHomeCanonical || !mappedAwayCanonical) {
+          if (debug) {
+            // eslint-disable-next-line no-console
+            console.warn("[cfbd] skipped game lacking canonical mapping", {
+              season,
+              seasonType,
+              week: mapped.week,
+              home: mapped.home,
+              away: mapped.away,
+              mappedHomeCanonical,
+              mappedAwayCanonical,
+            });
+          }
+          continue;
+        }
+        slate.push(mapped);
+      }
+    }
+
+    if (slate.length) {
+      const sorted = [...slate];
+      sorted.sort(sortGames);
+      if (kvConfigured) {
+        await kvSet(cacheKey, sorted, CACHE_TTL_SECONDS);
+      }
+    }
+
+    const response: CfbSlateResponse = { slate, provider: "cfbd", status };
+    setInMemoryCache(cacheKey, response, IN_MEMORY_TTL_MS, debug);
+
+    if (debug) {
       // eslint-disable-next-line no-console
       console.log("[cfbd] slate summary", {
         season,
         seasonType,
-        slateLength: 0,
+        slateLength: slate.length,
         status,
-        error: `CFBD ${status}: ${sampleBody}`,
+        error: undefined,
       });
     }
-    return { slate: [], provider: "cfbd", error: `CFBD ${status}: ${sampleBody}`, status };
-  }
 
-  const raw = (await res.json().catch(() => [])) as unknown;
-  if (debug) {
-    sampleBody = Array.isArray(raw) ? raw.slice(0, 2) : raw;
-    // eslint-disable-next-line no-console
-    console.log("CFBD slate fetch", {
-      season,
-      seasonType,
-      status,
-      sample: Array.isArray(sampleBody) ? sampleBody : [sampleBody],
-    });
-  }
+    return response;
+  })();
 
-  const slate: CfbGame[] = [];
-  if (Array.isArray(raw)) {
-    for (const game of raw) {
-      const mapped = mapGame(season, seasonType, game as Record<string, unknown>, debug);
-      if (!mapped) continue;
-      const mappedHomeCanonical = canonicalTeam(mapped.home);
-      const mappedAwayCanonical = canonicalTeam(mapped.away);
-      if (!mappedHomeCanonical || !mappedAwayCanonical) {
-        if (debug) {
-          // eslint-disable-next-line no-console
-          console.warn("[cfbd] skipped game lacking canonical mapping", {
-            season,
-            seasonType,
-            week: mapped.week,
-            home: mapped.home,
-            away: mapped.away,
-            mappedHomeCanonical,
-            mappedAwayCanonical,
-          });
-        }
-        continue;
-      }
-      slate.push(mapped);
-    }
+  pendingSlateFetches.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    pendingSlateFetches.delete(cacheKey);
   }
+}
 
-  if (slate.length) {
-    const sorted = [...slate];
-    sorted.sort(sortGames);
-    await kvSet(cacheKey, sorted, CACHE_TTL_SECONDS);
-  }
-
-  if (debug) {
-    // eslint-disable-next-line no-console
-    console.log("[cfbd] slate summary", {
-      season,
-      seasonType,
-      slateLength: slate.length,
-      status,
-      error: undefined,
-    });
-  }
-
-  return { slate, provider: "cfbd", status };
+export function __resetCfbdCacheForTests() {
+  inMemorySlateCache.clear();
+  pendingSlateFetches.clear();
 }
